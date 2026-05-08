@@ -3,6 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
+import apiApp from "./api/index.ts";
 
 dotenv.config();
 
@@ -15,10 +16,8 @@ async function startServer() {
 
   app.use(express.json({ limit: '50mb' }));
 
-  // API Routes
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
-  });
+  // Use API routes from Vercel-compatible file
+  app.use(apiApp);
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
