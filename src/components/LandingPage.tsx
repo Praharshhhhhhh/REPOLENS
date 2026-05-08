@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
-import { Zap, Brain, Compass, LineChart, Menu } from 'lucide-react';
+import { Zap, Brain, Compass, LineChart } from 'lucide-react';
 
 interface LandingPageProps {
   repoUrl: string;
@@ -11,6 +11,8 @@ interface LandingPageProps {
   isDragActive: boolean;
   error: string | null;
 }
+
+import { FloatingPaths } from './ui/background-paths';
 
 export const SparkleButton = ({ children, onClick, className = '' }: any) => {
   const [particles, setParticles] = useState<{id: number, x: number, y: number}[]>([]);
@@ -92,7 +94,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   return (
     <div className="relative w-full min-h-screen pb-32">
       {/* Background with Stars and Waves */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+      <div className="fixed inset-0 overflow-hidden pointer-events-none z-[0] opacity-60">
+        <FloatingPaths position={1} />
+        <FloatingPaths position={-1} />
         {/* Layered Mountain / Wave Silhouette */}
         <motion.div 
           initial={{ opacity: 0, y: 50 }}
@@ -111,16 +115,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
       {/* Main Content Layout similar to screenshot */}
       <div className="relative z-10 w-full h-screen flex flex-col pt-32 px-6">
-        {/* Left Side Menu */}
-        <div className="absolute left-10 top-1/2 -translate-y-1/2 hidden lg:flex flex-col items-center gap-16">
-          <button className="h-10 w-10 border border-black/10 rounded-full flex items-center justify-center hover:bg-black hover:text-white transition-all cursor-pointer">
-            <Menu size={16} />
-          </button>
-          <div className="text-editorial-label tracking-[0.4em] text-black drop-shadow-md" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>
-            NEXUS
-          </div>
-        </div>
-
         {/* Hero Top Title */}
         <div className="text-center space-y-4 max-w-4xl mx-auto flex-1 mt-[10vh]">
           <motion.h1 
@@ -139,23 +133,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             empowering your engineering journey.
           </motion.h2>
         </div>
-
-        {/* Descend Marker */}
-        <motion.div 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.8, duration: 1 }}
-          className="pb-12 text-center"
-        >
-          <div className="text-editorial-label text-teal-600 tracking-[0.4em] mb-4">DESCEND</div>
-          <div className="w-32 h-[1px] bg-black/20 mx-auto relative overflow-hidden">
-            <motion.div 
-              animate={{ x: [-100, 100] }}
-              transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
-              className="absolute inset-y-0 left-0 w-1/3 bg-teal-500"
-            />
-          </div>
-        </motion.div>
       </div>
 
       <div className="relative z-10 max-w-6xl mx-auto px-6 space-y-16 lg:pl-32">

@@ -46,7 +46,7 @@ export const AIChat: React.FC<AIChatProps> = ({ files, analysis }) => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-white border border-black/10 rounded-sm overflow-hidden shadow-sm">
+    <div className="flex flex-col h-full bg-white border border-black/10 rounded-sm overflow-hidden shadow-sm relative z-10">
       <div className="bg-slate-50 border-b border-black/5 px-4 py-3 flex items-center gap-2">
         <Bot size={16} className="text-primary" />
         <h3 className="font-sans text-[11px] uppercase tracking-widest font-semibold">Repository Chat</h3>

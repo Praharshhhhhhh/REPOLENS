@@ -9,6 +9,7 @@ import { RepoVisualizer } from './components/RepoVisualizer';
 import { LandingPage } from './components/LandingPage';
 import { AIChat } from './components/AIChat';
 import ReactMarkdown from 'react-markdown';
+import { FloatingPaths } from './components/ui/background-paths';
 
 export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -198,10 +199,14 @@ export default function App() {
               />
             </motion.div>
           ) : isAnalyzing ? (
-            <div className="min-h-[70vh] flex flex-col items-center justify-center gap-6">
-              <span className="text- editorial-label animate-pulse">Mapping Neural Nodes...</span>
-              <div className="h-px w-32 bg-primary/20" />
-              <p className="italic font-light text-muted">Decoding the system architecture.</p>
+            <div className="min-h-[70vh] flex flex-col items-center justify-center gap-6 relative z-10">
+              <div className="fixed inset-0 overflow-hidden pointer-events-none opacity-40 z-[0]">
+                <FloatingPaths position={1} />
+                <FloatingPaths position={-1} />
+              </div>
+              <span className="text- editorial-label animate-pulse relative z-10">Mapping Neural Nodes...</span>
+              <div className="h-px w-32 bg-primary/20 relative z-10" />
+              <p className="italic font-light text-muted relative z-10">Decoding the system architecture.</p>
             </div>
           ) : (
             <motion.div 
@@ -210,8 +215,14 @@ export default function App() {
               animate={{ opacity: 1 }}
               className="min-h-screen bg-background pt-[80px] z-40 relative pb-16"
             >
+              {/* Background Paths */}
+              <div className="fixed inset-0 overflow-hidden pointer-events-none opacity-40 z-[0]">
+                <FloatingPaths position={1} />
+                <FloatingPaths position={-1} />
+              </div>
+
               {/* Summary Section */}
-              <div className="max-w-7xl mx-auto px-6 py-12 grid grid-cols-1 lg:grid-cols-3 gap-12 lg:gap-24">
+              <div className="max-w-7xl mx-auto px-6 py-12 grid grid-cols-1 lg:grid-cols-3 gap-12 lg:gap-24 relative z-10">
                 
                 {/* Left/Main Column: Overview */}
                 <div className="col-span-1 lg:col-span-2 space-y-12">
@@ -382,7 +393,7 @@ export default function App() {
               </div>
 
               {/* Enhanced Repository Chat Section */}
-              <div className="max-w-7xl mx-auto px-6 py-24">
+              <div className="max-w-7xl mx-auto px-6 py-24 relative z-10">
                 <div className="space-y-6">
                   <div className="flex items-center gap-4 border-b border-black/10 pb-6 mb-8">
                     <div className="min-w-0">
@@ -398,18 +409,6 @@ export default function App() {
             </motion.div>
           )}
         </AnimatePresence>
-
-        {!analysis && !isAnalyzing && (
-          <footer className="mt-32 h-16 w-full border-t border-black/10 px-12 flex items-center justify-between font-sans text-[9px] uppercase tracking-[0.2em] opacity-40">
-            <div className="flex gap-8">
-              <span>Session ID: RL-7729-AX</span>
-              <span className="sm:inline hidden">Encrypted Neural Analysis</span>
-            </div>
-            <div>
-              CampusMind Intel Systems • 2026
-            </div>
-          </footer>
-        )}
       </main>
 
       {/* Mobile Nav */}
