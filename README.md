@@ -65,3 +65,143 @@ Instead of manually tracing files and dependencies, developers can simply paste 
 * semantic codebase understanding
 
 The platform converts raw repository structures into meaningful engineering intelligence, reducing hours of manual exploration into seconds of automated insight.
+# ✨ Key Features
+
+🔗 GitHub Repository Analysis — Paste any public GitHub repository URL for instant analysis
+🤖 AI-Powered Summaries — Generate structured explanations using Groq LLM inference
+📦 Tech Stack Detection — Automatically identify frameworks, languages, and libraries
+📁 Key File Discovery — Highlight the most important files and modules in the repository
+🕸️ Interactive Dependency Graphs — Visualize project architecture and file relationships
+⚡ Ultra-Fast AI Responses — Powered by Groq’s high-speed inference infrastructure
+🧠 Semantic Repository Understanding — Convert complex codebases into structured engineering insights
+🎨 Modern Developer Interface — Responsive UI built with React, Vite, and Tailwind
+
+---
+
+# 🛠️ Tech Stack & Architecture
+
+| Technology        | Purpose                                               |
+| ----------------- | ----------------------------------------------------- |
+| React + Vite      | Frontend SPA and developer interface                  |
+| Node.js + Express | Backend API and repository processing                 |
+| Groq AI           | High-speed LLM inference and repository summarization |
+| GitHub REST API   | Repository data retrieval and analysis                |
+| D3.js             | Interactive dependency graph visualization            |
+| Axios             | API communication and data fetching                   |
+| Tailwind CSS      | Modern responsive UI styling                          |
+| Vercel            | Deployment and serverless hosting                     |
+
+---
+
+# 📁 Project Structure
+
+```bash
+REPOLENS/
+├── client/                 # Frontend React application
+│   ├── src/
+│   │   ├── components/     # Reusable UI components
+│   │   ├── pages/          # Application pages
+│   │   ├── graphs/         # Dependency visualization logic
+│   │   └── utils/          # Helper functions
+│   └── public/             # Static assets
+│
+├── server/                 # Backend API server
+│   ├── routes/             # API endpoints
+│   ├── services/           # AI and GitHub integrations
+│   ├── utils/              # Repository parsing logic
+│   └── server.js           # Main backend entry
+│
+└── README.md
+```
+
+---
+
+# 🚀 Getting Started
+
+## Prerequisites
+
+* Node.js (Latest LTS Recommended)
+* npm or pnpm
+* Groq API Key
+* GitHub Personal Access Token
+
+---
+
+## Installation
+
+Clone the repository:
+
+```bash
+git clone https://github.com/yourusername/repolens.git
+cd repolens
+```
+
+Install frontend dependencies:
+
+```bash
+cd client
+npm install
+```
+
+Install backend dependencies:
+
+```bash
+cd ../server
+npm install
+```
+
+Create a `.env` file:
+
+```env
+GROQ_API_KEY=your_groq_api_key
+GITHUB_TOKEN=your_github_token
+PORT=5000
+```
+
+---
+
+# 🔧 Usage
+
+Start the backend server:
+
+```bash
+cd server
+npm run dev
+```
+
+Start the frontend application:
+
+```bash
+cd client
+npm run dev
+```
+
+Open:
+
+```txt
+http://localhost:5173
+```
+
+Paste a public GitHub repository URL and REPOLENS will generate:
+
+* repository summaries
+* architecture insights
+* dependency graphs
+* technology detection
+* semantic analysis
+
+---
+
+# 📝 License
+
+This project is licensed under the MIT License.
+
+You are free to:
+
+* use
+* modify
+* distribute
+* contribute
+
+The software is provided “as is” without warranty of any kind.
+
