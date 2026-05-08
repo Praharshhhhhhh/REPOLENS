@@ -1,10 +1,12 @@
 import { FileNode, RepoAnalysis } from "../types";
 
 export const analyzeCodebase = async (files: { path: string; type: 'file' | 'dir' }[], repoUrl?: string) => {
+  // Only send the paths, without file contents, to keep payload size tiny
+  const filesPayload = files.map(f => ({ path: f.path, type: f.type }));
   const response = await fetch('/api/analyzeCodebase', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ files, repoUrl }),
+    body: JSON.stringify({ files: filesPayload, repoUrl }),
   });
   
   if (!response.ok) {
@@ -37,10 +39,19 @@ export const askRepositoryQuestion = async (
   files: FileNode[],
   analysis: RepoAnalysis | null
 ) => {
+  // Only send the top 100 files with up to 5000 chars of content to avoid payload issues
+  const relevantFiles = files
+    .filter(f => f.type === 'file' && f.content && f.content.length > 0)
+    .slice(0, 100)
+    .map(f => ({
+      ...f,
+      content: f.content?.substring(0, 5000)
+    }));
+
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, history, files, analysis }),
+    body: JSON.stringify({ message, history, files: relevantFiles, analysis }),
   });
 
   if (!response.ok) {

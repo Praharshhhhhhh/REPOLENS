@@ -175,14 +175,37 @@ export default function App() {
     const file = files.find(f => f.path === fileId);
     if (!file) return;
 
-    setSelectedFile(file);
+    let displayFile = { ...file };
+    let fetchedContent = file.content;
+
+    setSelectedFile(displayFile);
     setFileExplanation(null);
     setIsExplaining(true);
+
+    if (!fetchedContent && repoUrl && repoUrl.includes('github.com')) {
+      try {
+        const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
+        if (match) {
+          const owner = match[1];
+          const repo = match[2].replace(/\.git$/, '');
+          const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${file.path}`, {
+            headers: { 'Accept': 'application/vnd.github.v3.raw' }
+          });
+          if (res.ok) {
+            fetchedContent = await res.text();
+            displayFile.content = fetchedContent;
+            setSelectedFile({...displayFile}); // force update
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch raw file", err);
+      }
+    }
 
     try {
       import('./services/aiService').then(async ({ analyzeFile }) => {
         try {
-          const result = await analyzeFile(file.path, file.content || "Content unavailable or excluded.");
+          const result = await analyzeFile(displayFile.path, fetchedContent || "Content unavailable or excluded.");
           setFileExplanation(result);
         } catch (e) {
           setFileExplanation("Failed to generate explanation for this file.");
@@ -193,7 +216,7 @@ export default function App() {
     } catch (e) {
       setIsExplaining(false);
     }
-  }, [files]);
+  }, [files, repoUrl]);
 
 
   const onDrop = async (acceptedFiles: File[]) => {
@@ -210,6 +233,9 @@ export default function App() {
         
         for (const [path, zipEntry] of Object.entries(content.files)) {
           if (!zipEntry.dir) {
+            if (path.includes('node_modules/') || path.includes('.git/') || path.includes('dist/') || path.includes('build/')) {
+              continue;
+            }
             // Read content of small files only to avoid memory issues
             let fileContent;
             // Ignore obvious binary extensions
@@ -238,8 +264,9 @@ export default function App() {
       } else {
         setError('Please upload a ZIP file or provide a GitHub link.');
       }
-    } catch (err) {
-      setError('Neural calibration failed. Please verify file integrity.');
+    } catch (err: any) {
+      console.error("ZIP processing error:", err);
+      setError(err.message || 'Neural calibration failed. Please verify file integrity.');
     } finally {
       setIsAnalyzing(false);
     }
@@ -263,7 +290,39 @@ export default function App() {
     setIsAnalyzing(true);
     setError(null);
     try {
-      const result = await analyzeCodebase([], url);
+      const match = url.match(/github\.com\/([^/]+)\/([^/]+)/);
+      if (!match) throw new Error("Could not parse GitHub URL. Ensure it looks like github.com/owner/repo");
+      const owner = match[1];
+      const repo = match[2].replace(/\.git$/, '');
+
+      // Get default branch
+      const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`);
+      if (!repoRes.ok) {
+        let msg = "Could not fetch repo details. Is it a valid public repository?";
+        if (repoRes.status === 403) msg = "GitHub API rate limit exceeded. Please try again later or upload a ZIP archive instead.";
+        else if (repoRes.status === 404) msg = "Repository not found. Is it private or deleted?";
+        throw new Error(msg);
+      }
+      const repoData = await repoRes.json();
+      const defaultBranch = repoData.default_branch;
+
+      // Get tree
+      const treeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${defaultBranch}?recursive=1`);
+      if (!treeRes.ok) throw new Error("Could not fetch repo tree.");
+      const treeData = await treeRes.json();
+
+
+      const newFiles: FileNode[] = treeData.tree
+        .filter((item: any) => !item.path.includes('node_modules/') && !item.path.includes('.git/') && !item.path.includes('dist/') && !item.path.includes('build/'))
+        .map((item: any) => ({
+          path: item.path,
+          type: item.type === 'blob' ? 'file' : 'dir',
+          size: item.size
+        }));
+
+      setFiles(newFiles);
+
+      const result = await analyzeCodebase(newFiles, url);
       setAnalysis(result);
       
       if (user) {
@@ -278,17 +337,9 @@ export default function App() {
         }
         fetchHistory(user.id);
       }
-
-      // Mock files for visualization since we can't crawl GitHub without token easily in client
-      setFiles([
-        { path: 'src/main.tsx', type: 'file' },
-        { path: 'src/App.tsx', type: 'file' },
-        { path: 'src/components/Header.tsx', type: 'file' },
-        { path: 'package.json', type: 'file' },
-        { path: 'public/index.html', type: 'file' }
-      ]);
-    } catch (err) {
-      setError('Protocol error: Failed to fetch repository data.');
+    } catch (err: any) {
+      console.error("Decode error:", err);
+      setError(err.message || 'Protocol error: Failed to fetch repository data.');
     } finally {
       setIsAnalyzing(false);
     }
@@ -323,13 +374,13 @@ export default function App() {
 
         <button 
           onClick={() => {
+            window.scrollTo({ top: 0, behavior: 'instant' });
             setAnalysis(null);
             setFiles([]);
-            const repoInput = document.querySelector('input') as HTMLInputElement;
-            if (repoInput) {
-              window.scrollTo({top: 0, behavior: 'smooth'});
-              setTimeout(() => repoInput.focus(), 300);
-            }
+            setTimeout(() => {
+              const repoInput = document.querySelector('input') as HTMLInputElement;
+              if (repoInput) repoInput.focus({ preventScroll: true });
+            }, 100);
           }}
           className="bg-primary text-on-primary py-2.5 px-8 font-sans text-[11px] uppercase tracking-[0.2em] hover:bg-black transition-all">
           Generate Intel
@@ -516,84 +567,78 @@ export default function App() {
               </div>
 
               {/* Summary Section */}
-              <div className="max-w-7xl mx-auto px-6 py-12 grid grid-cols-1 lg:grid-cols-3 gap-12 lg:gap-24 relative z-10">
+              <div className="max-w-5xl mx-auto px-6 py-12 flex flex-col gap-12 relative z-10">
                 
-                {/* Left/Main Column: Overview */}
-                <div className="col-span-1 lg:col-span-2 space-y-12">
-                  
-                  {/* Header Info */}
-                  <div className="space-y-6">
-                    <div className="flex items-center gap-4 border-b border-black/10 pb-6">
-                       <button 
-                        onClick={() => { setAnalysis(null); setFiles([]); }}
-                        className="h-10 w-10 rounded-full border border-black/10 flex items-center justify-center hover:bg-black hover:text-white transition-all shrink-0"
-                      >
-                        <ArrowLeft size={16} />
-                      </button>
-                      <div className="min-w-0">
-                        <h2 className="text-editorial-label mb-1">System Stage</h2>
-                        <p className="text-2xl lg:text-3xl italic font-light truncate">{repoUrl || 'Project Archive'}</p>
-                      </div>
-                    </div>
-                    
-                    <div className="flex gap-2 flex-wrap">
-                      {analysis?.techStack.map(tech => (
-                        <span key={tech} className="text-[10px] uppercase tracking-widest font-sans opacity-60 px-3 py-1.5 border border-black/10 rounded-sm">
-                          {tech}
-                        </span>
-                      ))}
+                {/* Header Info */}
+                <div className="space-y-6 border-b border-black/10 pb-8">
+                  <div className="flex items-center gap-4">
+                     <button 
+                      onClick={() => { setAnalysis(null); setFiles([]); }}
+                      className="h-10 w-10 rounded-full border border-black/10 flex items-center justify-center hover:bg-black hover:text-white transition-all shrink-0"
+                    >
+                      <ArrowLeft size={16} />
+                    </button>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-sans text-black/50 tracking-widest uppercase mb-1">System Stage</p>
+                      <h2 className="text-2xl lg:text-3xl italic font-light truncate">{repoUrl || 'Project Archive'}</h2>
                     </div>
                   </div>
+                  
+                  <div className="flex gap-2 flex-wrap pt-2">
+                    {analysis?.techStack.map(tech => (
+                      <span key={tech} className="text-[10px] uppercase tracking-widest font-sans opacity-60 px-3 py-1.5 border border-black/10 rounded-sm">
+                        {tech}
+                      </span>
+                    ))}
+                  </div>
+                </div>
 
-                  {/* Intelligent Summary */}
+                {/* Intelligence Metadata Grid */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                  <div>
+                    <span className="text-[10px] font-sans uppercase tracking-widest opacity-40 block mb-1">Estimated Complexity</span>
+                    <span className="text-[15px] font-medium">{analysis?.estimatedComplexity}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-sans uppercase tracking-widest opacity-40 block mb-1">Project Status</span>
+                    <span className="text-[15px] font-medium">{analysis?.projectStatus}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-sans uppercase tracking-widest opacity-40 block mb-1">Protocol Entry</span>
+                    <span className="text-[15px] italic font-light break-words">{analysis?.entryPoint}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-sans uppercase tracking-widest opacity-40 block mb-1">Active Threads</span>
+                    <span className="text-[15px] italic font-light">{files.length} Nodes</span>
+                  </div>
+                </div>
+
+                {/* Intelligent Summary & Setup */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
                   <div className="space-y-4">
                     <h3 className="text-editorial-label italic border-b border-black/5 pb-2">Repository Purpose</h3>
-                    <div className="markdown-body prose prose-slate leading-relaxed">
+                    <div className="markdown-body prose prose-slate leading-relaxed text-[15px]">
                       <ReactMarkdown>{analysis?.purpose || ""}</ReactMarkdown>
                     </div>
                   </div>
-
-                  {/* Architecture */}
-                  <div className="bg-primary text-white p-8 rounded-sm shadow-md space-y-4">
-                    <h3 className="text-editorial-label opacity-50 uppercase tracking-widest text-[9px] border-b border-white/10 pb-2">Architecture Overview</h3>
-                    <div className="markdown-body leading-relaxed opacity-90 prose-invert prose-slate">
-                      <ReactMarkdown>{analysis?.architectureOverview || ""}</ReactMarkdown>
-                    </div>
-                  </div>
-
-                  {/* Setup Instructions */}
                   <div className="space-y-4">
                     <h3 className="text-editorial-label italic border-b border-black/5 pb-2">Setup Instructions</h3>
-                    <div className="markdown-body prose prose-slate leading-relaxed">
+                    <div className="markdown-body prose prose-slate leading-relaxed text-[15px]">
                       <ReactMarkdown>{analysis?.setupInstructions || ""}</ReactMarkdown>
                     </div>
                   </div>
                 </div>
 
-                {/* Right Column: Metadata and Directories */}
-                <div className="space-y-12 lg:pl-12 lg:border-l border-black/10">
-                  <div className="space-y-6">
-                    <h3 className="text-editorial-label italic border-b border-black/5 pb-2">Intelligence Metadata</h3>
-                    <div className="space-y-6 pt-2">
-                      <div>
-                        <span className="text-[10px] font-sans uppercase tracking-widest opacity-40 block mb-1">Estimated Complexity</span>
-                        <span className="text-[15px] font-medium">{analysis?.estimatedComplexity}</span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] font-sans uppercase tracking-widest opacity-40 block mb-1">Project Status</span>
-                        <span className="text-[15px] font-medium">{analysis?.projectStatus}</span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] font-sans uppercase tracking-widest opacity-40 block mb-1">Protocol Entry</span>
-                        <span className="text-[15px] italic font-light break-words">{analysis?.entryPoint}</span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] font-sans uppercase tracking-widest opacity-40 block mb-1">Active Threads</span>
-                        <span className="text-[15px] italic font-light">{files.length} Nodes</span>
-                      </div>
-                    </div>
+                {/* Architecture */}
+                <div className="bg-primary text-white p-8 sm:p-12 rounded-sm shadow-md space-y-6">
+                  <h3 className="text-editorial-label opacity-50 uppercase tracking-widest text-[9px] border-b border-white/10 pb-4">Architecture Overview</h3>
+                  <div className="markdown-body leading-relaxed opacity-90 prose-invert prose-slate text-[15px]">
+                    <ReactMarkdown>{analysis?.architectureOverview || ""}</ReactMarkdown>
                   </div>
+                </div>
 
+                {/* Folders & Dependencies */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-12 pt-8 border-t border-black/10">
                   <div className="space-y-6">
                     <h3 className="text-editorial-label italic border-b border-black/5 pb-2">Important Folders</h3>
                     <div className="space-y-6 pt-2">
@@ -603,6 +648,21 @@ export default function App() {
                           <p className="text-[12px] font-sans leading-relaxed text-black/50 uppercase tracking-wider mt-2">{folder.description}</p>
                         </div>
                       ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-6">
+                    <h3 className="text-editorial-label italic border-b border-black/5 pb-2">Core Dependencies</h3>
+                    <div className="space-y-6 pt-2">
+                      {analysis?.coreDependencies?.map(dep => (
+                        <div key={dep.name} className="group">
+                          <h4 className="text-[13px] font-medium font-sans mb-1 group-hover:text-primary transition-colors cursor-pointer break-all">{dep.name}</h4>
+                          <p className="text-[12px] font-sans leading-relaxed text-black/50 uppercase tracking-wider mt-2">{dep.description}</p>
+                        </div>
+                      ))}
+                      {!analysis?.coreDependencies?.length && (
+                        <p className="text-[12px] font-sans leading-relaxed text-black/50 uppercase tracking-wider">No significant dependencies identified.</p>
+                      )}
                     </div>
                   </div>
                 </div>

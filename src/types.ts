@@ -9,6 +9,7 @@ export interface RepoAnalysis {
     architectureOverview: string;
     techStack: string[];
     importantFolders: { name: string; description: string }[];
+    coreDependencies: { name: string; description: string }[];
     entryPoint: string;
     setupInstructions: string;
     estimatedComplexity: string;
