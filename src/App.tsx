@@ -1,6 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Terminal, Github, FileUp, ChevronRight, Bolt, Shield, Activity, Globe, ArrowLeft, Loader2, Search } from 'lucide-react';
+import { Terminal, Github, FileUp, ChevronRight, Bolt, Shield, Activity, Globe, ArrowLeft, Loader2, Search, LogOut, History, User, Mail, Trash2 } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import JSZip from 'jszip';
 import { analyzeCodebase } from './services/aiService';
@@ -10,8 +10,123 @@ import { LandingPage } from './components/LandingPage';
 import { AIChat } from './components/AIChat';
 import ReactMarkdown from 'react-markdown';
 import { FloatingPaths } from './components/ui/background-paths';
+import { supabase } from './lib/supabase';
 
 export default function App() {
+  const [user, setUser] = useState<any>(null);
+  const [history, setHistory] = useState<any[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      if (session?.user) fetchHistory(session.user.id);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      if (session?.user) fetchHistory(session.user.id);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const fetchHistory = async (userId: string) => {
+    const { data, error } = await supabase.from('repo_history').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+    if (error) {
+      console.error('Error fetching history:', error);
+    }
+    if (data) setHistory(data);
+  };
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const origin = event.origin;
+      if (!origin.endsWith('.run.app') && !origin.includes('localhost')) {
+        return;
+      }
+      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
+        supabase.auth.getSession().then(({ data: { session } }) => {
+           setUser(session?.user ?? null);
+           if (session?.user) fetchHistory(session.user.id);
+        });
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  const handleGithubLogin = async () => {
+    try {
+      setAuthError('');
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'github',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+          skipBrowserRedirect: true
+        }
+      });
+      if (error) throw error;
+      if (data?.url) {
+        const authWindow = window.open(data.url, 'oauth_popup', 'width=600,height=700');
+        if (!authWindow) {
+          alert('Please allow popups for this site to connect your account.');
+        }
+      }
+    } catch (err: any) {
+      console.error('Unexpected error during login:', err);
+      setAuthError(err.message || 'Unknown error');
+    }
+  };
+
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    setAuthError('');
+    try {
+      if (isSignUp) {
+        const { error } = await supabase.auth.signUp({ email: authEmail, password: authPassword });
+        if (error) throw error;
+        alert('Sign up successful! Please check your email for verification.');
+        setIsSignUp(false);
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
+        if (error) throw error;
+        setShowAuthModal(false);
+        setAuthEmail('');
+        setAuthPassword('');
+      }
+    } catch (err: any) {
+      console.error('Email auth error:', err);
+      setAuthError(err.message || 'Authentication failed');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+  };
+
+  const handleDeleteHistory = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const { error } = await supabase.from('repo_history').delete().eq('id', id);
+      if (error) throw error;
+      setHistory(prev => prev.filter(item => item.id !== id));
+    } catch (err: any) {
+      console.error('Failed to delete history record:', err.message);
+      alert('Failed to delete history record: ' + err.message);
+    }
+  };
+
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<RepoAnalysis | null>(null);
   const [files, setFiles] = useState<FileNode[]>([]);
@@ -111,6 +226,15 @@ export default function App() {
         setFiles(extractedFiles);
         const result = await analyzeCodebase(extractedFiles);
         setAnalysis(result);
+
+        if (user) {
+          const archiveUrl = `Archive: ${file.name}`;
+          const { error: dbError } = await supabase.from('repo_history').insert({ user_id: user.id, repo_url: archiveUrl });
+          if (dbError) {
+            console.error("Error saving history:", dbError.message);
+          }
+          fetchHistory(user.id);
+        }
       } else {
         setError('Please upload a ZIP file or provide a GitHub link.');
       }
@@ -121,13 +245,40 @@ export default function App() {
     }
   };
 
-  const decodeRepo = async () => {
-    if (!repoUrl) return;
+  const decodeRepo = async (urlToDecode?: string | React.MouseEvent) => {
+    const url = typeof urlToDecode === 'string' ? urlToDecode : repoUrl;
+    if (!url) return;
+    if (url.startsWith('Archive:')) {
+      alert("Local archive files cannot be re-loaded from history.");
+      return;
+    }
+    
+    // Validate if it is a correct GitHub URL
+    const githubRegex = /^https?:\/\/(www\.)?github\.com\/[\w.-]+\/[\w.-]+/;
+    if (!githubRegex.test(url)) {
+      setError('Invalid URL: Please provide a valid GitHub repository link (e.g., https://github.com/user/repo).');
+      return;
+    }
+
     setIsAnalyzing(true);
     setError(null);
     try {
-      const result = await analyzeCodebase([], repoUrl);
+      const result = await analyzeCodebase([], url);
       setAnalysis(result);
+      
+      if (user) {
+        const { error } = await supabase.from('repo_history').insert({ user_id: user.id, repo_url: url });
+        if (error) {
+          console.error("Error saving history:", error.message);
+          // Don't alert here to avoid stopping the main flow, but we log the error.
+          // If the table doesn't exist, this is usually the issue:
+          if (error.code === '42P01') {
+            alert('Supabase table "repo_history" does not exist. Please create it in your Supabase project with columns: id, user_id, repo_url, created_at.');
+          }
+        }
+        fetchHistory(user.id);
+      }
+
       // Mock files for visualization since we can't crawl GitHub without token easily in client
       setFiles([
         { path: 'src/main.tsx', type: 'file' },
@@ -160,7 +311,14 @@ export default function App() {
         <div className="hidden md:flex items-center gap-10 font-sans text-[11px] uppercase tracking-widest opacity-60">
           <a href="#" onClick={(e) => { e.preventDefault(); window.scrollTo({top: 0, behavior: 'smooth'}); }} className="hover:opacity-100 transition-opacity">Platform</a>
           <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="hover:opacity-100 transition-opacity">Documentation</a>
-          <a href="mailto:support@repolens.io" className="hover:opacity-100 transition-opacity">Support</a>
+          {user ? (
+             <>
+               <button onClick={() => setShowHistory(!showHistory)} className="hover:opacity-100 transition-opacity flex items-center gap-1"><History size={12}/> History</button>
+               <button onClick={handleLogout} className="hover:opacity-100 transition-opacity flex items-center gap-1"><LogOut size={12}/> Sign Out</button>
+             </>
+          ) : (
+             <button onClick={() => setShowAuthModal(true)} className="hover:opacity-100 transition-opacity flex items-center gap-1"><User size={12}/> Sign In</button>
+          )}
         </div>
 
         <button 
@@ -177,6 +335,142 @@ export default function App() {
           Generate Intel
         </button>
       </nav>
+
+      {/* Auth Modal */}
+      <AnimatePresence>
+        {showAuthModal && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowAuthModal(false);
+            }}
+          >
+            <div className="bg-white border border-black/10 shadow-2xl p-8 max-w-sm w-full relative">
+              <button 
+                onClick={() => setShowAuthModal(false)}
+                className="absolute top-4 right-4 opacity-50 hover:opacity-100 transition-opacity"
+              >✕</button>
+              
+              <h2 className="text-xl font-bold mb-6 font-sans">
+                {isSignUp ? 'Create Account' : 'Sign In'}
+              </h2>
+              
+              {authError && (
+                <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm border border-red-200">
+                  {authError}
+                </div>
+              )}
+
+              <form onSubmit={handleEmailAuth} className="space-y-4 mb-6">
+                <div>
+                  <label className="block text-xs uppercase tracking-widest opacity-60 mb-1">Email</label>
+                  <input 
+                    type="email" 
+                    required
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    className="w-full border border-black/10 px-3 py-2 text-sm focus:outline-none focus:border-primary"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs uppercase tracking-widest opacity-60 mb-1">Password</label>
+                  <input 
+                    type="password" 
+                    required
+                    minLength={6}
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    className="w-full border border-black/10 px-3 py-2 text-sm focus:outline-none focus:border-primary"
+                  />
+                </div>
+                
+                <button 
+                  type="submit" 
+                  disabled={authLoading}
+                  className="w-full bg-primary text-white py-2.5 text-xs uppercase tracking-widest hover:bg-black transition-colors disabled:opacity-50"
+                >
+                  {authLoading ? 'Processing...' : (isSignUp ? 'Sign Up' : 'Sign In')}
+                </button>
+              </form>
+
+              <div className="relative mb-6">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-black/10"></div>
+                </div>
+                <div className="relative flex justify-center text-xs">
+                  <span className="bg-white px-2 text-black/40">Or continue with</span>
+                </div>
+              </div>
+
+              <button 
+                type="button"
+                onClick={handleGithubLogin}
+                className="w-full flex items-center justify-center gap-2 border border-black/10 py-2.5 text-sm hover:bg-black/5 transition-colors"
+              >
+                <Github size={16} /> GitHub
+              </button>
+
+              <div className="mt-6 text-center">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setIsSignUp(!isSignUp);
+                    setAuthError('');
+                  }}
+                  className="text-xs text-primary/60 hover:text-primary transition-colors"
+                >
+                  {isSignUp ? 'Already have an account? Sign In' : 'Need an account? Sign Up'}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* History Modal */}
+      <AnimatePresence>
+        {showHistory && (
+          <motion.div 
+            initial={{ opacity: 0, x: 300 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 300 }}
+            className="fixed top-0 right-0 h-full w-80 bg-white border-l border-black/10 shadow-2xl z-50 flex flex-col p-6 overflow-y-auto pt-24"
+          >
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-sm font-sans uppercase tracking-widest font-semibold">Decoded Nodes History</h3>
+              <button onClick={() => setShowHistory(false)} className="opacity-50 hover:opacity-100">✕</button>
+            </div>
+            {history.length === 0 ? (
+              <div className="text-[12px] opacity-50 italic">No history recorded yet. Add a GitHub URL to begin parsing.</div>
+            ) : (
+              <div className="space-y-4">
+                {history.map((item, idx) => (
+                  <div key={idx} className="p-3 border border-black/10 rounded-sm hover:bg-black/5 cursor-pointer transition-colors flex justify-between items-start gap-2" onClick={() => {
+                    setRepoUrl(item.repo_url);
+                    setShowHistory(false);
+                    setTimeout(() => decodeRepo(item.repo_url), 100);
+                  }}>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[10px] uppercase opacity-50 mb-1">{new Date(item.created_at).toLocaleDateString()}</div>
+                      <div className="text-[13px] font-mono break-all">{item.repo_url}</div>
+                    </div>
+                    <button 
+                      onClick={(e) => handleDeleteHistory(item.id, e)} 
+                      className="p-1.5 opacity-40 hover:opacity-100 hover:text-red-500 transition-colors shrink-0 rounded-sm"
+                      title="Delete from history"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <main className="pb-20">
         <AnimatePresence mode="wait">
