@@ -14,7 +14,9 @@ app.post('/api/health', (req, res) => {
 app.post('/api/analyzeCodebase', async (req, res) => {
   try {
     const { files, repoUrl } = req.body;
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
+    const ai = new GoogleGenAI({ apiKey });
     
     const prompt = `
       Analyze this repository structure and contents.
@@ -70,7 +72,9 @@ app.post('/api/analyzeCodebase', async (req, res) => {
 app.post('/api/analyzeFile', async (req, res) => {
   try {
     const { filePath, fileContent } = req.body;
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
+    const ai = new GoogleGenAI({ apiKey });
     
     const prompt = `
       Analyze the following file from the repository:
@@ -96,7 +100,9 @@ app.post('/api/analyzeFile', async (req, res) => {
 app.post('/api/chat', async (req, res) => {
   try {
     const { message, history, files, analysis } = req.body;
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
+    const ai = new GoogleGenAI({ apiKey });
 
     const relevantFilesInfo = files
       .filter((f: any) => f.type === 'file' && f.content && f.content.length > 0)
