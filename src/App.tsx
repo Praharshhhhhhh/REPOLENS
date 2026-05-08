@@ -374,12 +374,16 @@ export default function App() {
 
         <button 
           onClick={() => {
-            window.scrollTo({ top: 0, behavior: 'instant' });
             setAnalysis(null);
             setFiles([]);
             setTimeout(() => {
               const repoInput = document.querySelector('input') as HTMLInputElement;
-              if (repoInput) repoInput.focus({ preventScroll: true });
+              if (repoInput) {
+                repoInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                setTimeout(() => repoInput.focus({ preventScroll: true }), 300);
+              } else {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }
             }, 100);
           }}
           className="bg-primary text-on-primary py-2.5 px-8 font-sans text-[11px] uppercase tracking-[0.2em] hover:bg-black transition-all">

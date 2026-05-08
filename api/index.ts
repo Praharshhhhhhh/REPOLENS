@@ -15,7 +15,7 @@ app.post('/api/analyzeCodebase', async (req, res) => {
   try {
     const { files, repoUrl } = req.body;
     const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) return res.status(500).json({ error: "GROQ_API_KEY is not configured on the server." });
+    if (!apiKey) return res.status(500).json({ error: "GROQ_API_KEY is missing. Please add it to Settings -> Secrets in AI Studio, or as an Environment Variable in Vercel." });
     
     const groq = new Groq({ apiKey });
     
@@ -59,6 +59,9 @@ app.post('/api/analyzeCodebase', async (req, res) => {
     }
   } catch (error: any) {
     console.error('Error in analyzeCodebase:', error);
+    if (error?.status === 401 || error?.message?.includes('401') || error?.message?.includes('invalid_api_key')) {
+        return res.status(500).json({ error: "Your GROQ_API_KEY is invalid. Please check your AI Studio Platform Settings and update the key." });
+    }
     res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 });
@@ -67,7 +70,7 @@ app.post('/api/analyzeFile', async (req, res) => {
   try {
     const { filePath, fileContent } = req.body;
     const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) return res.status(500).json({ error: "GROQ_API_KEY is not configured on the server." });
+    if (!apiKey) return res.status(500).json({ error: "GROQ_API_KEY is missing. Please add it to Settings -> Secrets in AI Studio, or as an Environment Variable in Vercel." });
     
     const groq = new Groq({ apiKey });
     
@@ -88,6 +91,9 @@ app.post('/api/analyzeFile', async (req, res) => {
     res.json({ result: response.choices[0]?.message?.content || "No explanation available." });
   } catch (error: any) {
     console.error('Error in analyzeFile:', error);
+    if (error?.status === 401 || error?.message?.includes('401') || error?.message?.includes('invalid_api_key')) {
+        return res.status(500).json({ error: "Your GROQ_API_KEY is invalid. Please check your AI Studio Platform Settings and update the key." });
+    }
     res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 });
@@ -96,7 +102,7 @@ app.post('/api/chat', async (req, res) => {
   try {
     const { message, history, files, analysis } = req.body;
     const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) return res.status(500).json({ error: "GROQ_API_KEY is not configured on the server." });
+    if (!apiKey) return res.status(500).json({ error: "GROQ_API_KEY is missing. Please add it to Settings -> Secrets in AI Studio, or as an Environment Variable in Vercel." });
     
     const groq = new Groq({ apiKey });
 
@@ -134,6 +140,9 @@ Be concise but expert.`;
     res.json({ result: response.choices[0]?.message?.content || "I was unable to answer the question." });
   } catch (error: any) {
     console.error('Error in chat:', error);
+    if (error?.status === 401 || error?.message?.includes('401') || error?.message?.includes('invalid_api_key')) {
+        return res.status(500).json({ error: "Your GROQ_API_KEY is invalid. Please check your AI Studio Platform Settings and update the key." });
+    }
     res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 });
