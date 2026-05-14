@@ -361,7 +361,7 @@ export default function App() {
         
         <div className="hidden md:flex items-center gap-10 font-sans text-[11px] uppercase tracking-widest opacity-60">
           <a href="#" onClick={(e) => { e.preventDefault(); window.scrollTo({top: 0, behavior: 'smooth'}); }} className="hover:opacity-100 transition-opacity">Platform</a>
-          <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="hover:opacity-100 transition-opacity">Documentation</a>
+          <a href="https://github.com/Praharshhhhhhh/REPOLENS" target="_blank" rel="noopener noreferrer" className="hover:opacity-100 transition-opacity">Documentation</a>
           {user ? (
              <>
                <button onClick={() => setShowHistory(!showHistory)} className="hover:opacity-100 transition-opacity flex items-center gap-1"><History size={12}/> History</button>
@@ -638,6 +638,39 @@ export default function App() {
                   <h3 className="text-editorial-label opacity-50 uppercase tracking-widest text-[9px] border-b border-white/10 pb-4">Architecture Overview</h3>
                   <div className="markdown-body leading-relaxed opacity-90 prose-invert prose-slate text-[15px]">
                     <ReactMarkdown>{analysis?.architectureOverview || ""}</ReactMarkdown>
+                  </div>
+                </div>
+
+                {/* Features & Use Cases */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-12 pt-8 border-t border-black/10">
+                  <div className="space-y-6">
+                    <h3 className="text-editorial-label italic border-b border-black/5 pb-2">Key Features</h3>
+                    <div className="space-y-6 pt-2">
+                      {analysis?.keyFeatures?.map((feature, i) => (
+                        <div key={i} className="group">
+                          <h4 className="text-[14px] font-medium font-sans mb-1 group-hover:text-primary transition-colors">{feature.name}</h4>
+                          <p className="text-[13px] font-sans leading-relaxed text-black/60 mt-1">{feature.description}</p>
+                        </div>
+                      ))}
+                      {!analysis?.keyFeatures?.length && (
+                        <p className="text-[13px] font-sans leading-relaxed text-black/50">No prominent features identified.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-6">
+                    <h3 className="text-editorial-label italic border-b border-black/5 pb-2">Primary Use Cases</h3>
+                    <div className="space-y-4 pt-2">
+                       {analysis?.primaryUseCases?.map((useCase, i) => (
+                        <div key={i} className="flex gap-3 items-start">
+                          <div className="h-1.5 w-1.5 rounded-full bg-primary/30 mt-2 shrink-0"></div>
+                          <p className="text-[14px] font-sans leading-relaxed text-black/80">{useCase}</p>
+                        </div>
+                      ))}
+                      {!analysis?.primaryUseCases?.length && (
+                        <p className="text-[13px] font-sans leading-relaxed text-black/50">No main use cases identified.</p>
+                      )}
+                    </div>
                   </div>
                 </div>
 

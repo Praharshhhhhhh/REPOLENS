@@ -36,7 +36,9 @@ app.post('/api/analyzeCodebase', async (req, res) => {
       "coreDependencies": [{"name": "Dependency name", "description": "Detailed explanation of what this dependency does across the repo and why it is used"}],
       "setupInstructions": "Detailed steps on how to set up, install dependencies, configure environment, and run the code",
       "estimatedComplexity": "Complexity assessment with a detailed justification (e.g., 'Medium: Has complex state management but few external integrations')",
-      "projectStatus": "Guess of the project status with detailed reasoning (e.g., 'Active Development: recent tooling added, WIP features')"
+      "projectStatus": "Guess of the project status with detailed reasoning (e.g., 'Active Development: recent tooling added, WIP features')",
+      "keyFeatures": [{"name": "Feature name", "description": "Highly detailed description of the most important features and functionalities that a new user needs to understand"}],
+      "primaryUseCases": ["Detailed primary use cases and examples of how it is intended to be used"]
 
       JSON ONLY. NO MARKDOWN. NO BACKTICKS.
     `;

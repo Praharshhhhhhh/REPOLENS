@@ -14,4 +14,6 @@ export interface RepoAnalysis {
     setupInstructions: string;
     estimatedComplexity: string;
     projectStatus: string;
+    keyFeatures: { name: string; description: string }[];
+    primaryUseCases: string[];
 }
