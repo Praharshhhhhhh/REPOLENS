@@ -3,7 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
-import apiApp from "./api/index.ts";
+import apiApp from "../api/index.ts";
 
 dotenv.config();
 
@@ -12,11 +12,11 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '50mb' }));
 
-  // Use API routes from Vercel-compatible file
+  // API routes
   app.use(apiApp);
 
   // Vite middleware for development
@@ -27,6 +27,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
+    // In production, serve the pre-built Vite frontend from /dist
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server/server.ts",
-    "start": "node server/server.ts",
+    "start": "NODE_ENV=production node --import tsx/esm server/server.ts",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",

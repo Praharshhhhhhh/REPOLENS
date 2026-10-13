@@ -44,7 +44,7 @@ app.post('/api/analyzeCodebase', async (req, res) => {
     `;
 
     const response = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+      model: 'openai/gpt-oss-20b',
       messages: [
         { role: 'user', content: prompt }
       ],
@@ -86,7 +86,7 @@ app.post('/api/analyzeFile', async (req, res) => {
     `;
 
     const response = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+      model: 'openai/gpt-oss-20b',
       messages: [{ role: 'user', content: prompt }]
     });
 
@@ -134,7 +134,7 @@ Be concise but expert.`;
     messages.push({ role: 'user', content: message });
 
     const response = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+      model: 'openai/gpt-oss-20b',
       messages: messages as any,
       temperature: 0.3
     });
