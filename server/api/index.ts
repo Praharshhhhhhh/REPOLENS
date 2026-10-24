@@ -1,5 +1,6 @@
 import express from 'express';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 import Groq from 'groq-sdk';
 import JSZip from 'jszip';
 import { GoogleGenAI } from '@google/genai';
@@ -8,6 +9,184 @@ dotenv.config();
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
+
+// ============================================================
+// Amazon RDS (PostgreSQL) Connection & Auto-Schema Initialization
+// ============================================================
+let rdsPool: any = null;
+let rdsSchemaInitialized = false;
+
+async function getRdsPool(): Promise<any | null> {
+  const dbUrl = (process.env.DATABASE_URL || '').trim();
+  if (!dbUrl) return null;
+
+  if (!rdsPool) {
+    try {
+      const pgModuleName = 'pg';
+      const pg: any = await import(pgModuleName);
+      const PoolClass = pg.Pool || pg.default?.Pool;
+      rdsPool = new PoolClass({
+        connectionString: dbUrl,
+        ssl: dbUrl.includes('localhost') || dbUrl.includes('127.0.0.1')
+          ? false
+          : { rejectUnauthorized: false }
+      });
+    } catch (err: any) {
+      console.warn('[RDS] PostgreSQL driver initialization notice:', err?.message);
+      return null;
+    }
+  }
+
+  if (rdsPool && !rdsSchemaInitialized) {
+    try {
+      await rdsPool.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          email TEXT UNIQUE NOT NULL,
+          password_hash TEXT NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS repo_history (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          repo_url TEXT NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+      `);
+      rdsSchemaInitialized = true;
+      console.log('[RDS] Connected to Amazon RDS PostgreSQL & verified tables');
+    } catch (err: any) {
+      console.error('[RDS] Table initialization error:', err?.message);
+      return null;
+    }
+  }
+
+  return rdsPool;
+}
+
+function hashPassword(password: string, salt?: string): string {
+  const actualSalt = salt || crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, actualSalt, 64).toString('hex');
+  return `${actualSalt}:${hash}`;
+}
+
+function verifyPassword(password: string, stored: string): boolean {
+  const [salt, originalHash] = (stored || '').split(':');
+  if (!salt || !originalHash) return false;
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(originalHash, 'hex'));
+}
+
+app.get('/api/db/status', async (req, res) => {
+  const pool = await getRdsPool();
+  res.json({ configured: Boolean(pool), provider: pool ? 'amazon_rds' : 'local' });
+});
+
+app.post('/api/db/signup', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+    const pool = await getRdsPool();
+    if (!pool) {
+      return res.status(503).json({ error: 'RDS_NOT_CONFIGURED' });
+    }
+    const cleanEmail = email.trim().toLowerCase();
+    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [cleanEmail]);
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'An account with this email already exists. Please sign in.' });
+    }
+    const id = crypto.randomUUID();
+    const passwordHash = hashPassword(password);
+    await pool.query(
+      'INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)',
+      [id, cleanEmail, passwordHash]
+    );
+    const user = { id, email: cleanEmail, user_metadata: { name: cleanEmail.split('@')[0] } };
+    const session = { user, access_token: `rds_${id}` };
+    res.json({ user, session });
+  } catch (err: any) {
+    console.error('[RDS Signup Error]:', err);
+    res.status(500).json({ error: err.message || 'Database signup failed' });
+  }
+});
+
+app.post('/api/db/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+    const pool = await getRdsPool();
+    if (!pool) {
+      return res.status(503).json({ error: 'RDS_NOT_CONFIGURED' });
+    }
+    const cleanEmail = email.trim().toLowerCase();
+    const result = await pool.query('SELECT id, email, password_hash FROM users WHERE email = $1', [cleanEmail]);
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    const row = result.rows[0];
+    if (!verifyPassword(password, row.password_hash)) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    const user = { id: row.id, email: row.email, user_metadata: { name: row.email.split('@')[0] } };
+    const session = { user, access_token: `rds_${row.id}` };
+    res.json({ user, session });
+  } catch (err: any) {
+    console.error('[RDS Login Error]:', err);
+    res.status(500).json({ error: err.message || 'Database login failed' });
+  }
+});
+
+app.get('/api/db/history', async (req, res) => {
+  try {
+    const userId = req.query.user_id as string;
+    if (!userId) return res.json({ data: [] });
+    const pool = await getRdsPool();
+    if (!pool) return res.status(503).json({ error: 'RDS_NOT_CONFIGURED' });
+    const result = await pool.query(
+      'SELECT id, user_id, repo_url, created_at FROM repo_history WHERE user_id = $1 ORDER BY created_at DESC',
+      [userId]
+    );
+    res.json({ data: result.rows });
+  } catch (err: any) {
+    console.error('[RDS Get History Error]:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/db/history', async (req, res) => {
+  try {
+    const { user_id, repo_url } = req.body;
+    if (!user_id || !repo_url) return res.status(400).json({ error: 'Missing user_id or repo_url' });
+    const pool = await getRdsPool();
+    if (!pool) return res.status(503).json({ error: 'RDS_NOT_CONFIGURED' });
+    const id = crypto.randomUUID();
+    const result = await pool.query(
+      'INSERT INTO repo_history (id, user_id, repo_url) VALUES ($1, $2, $3) RETURNING id, user_id, repo_url, created_at',
+      [id, user_id, repo_url]
+    );
+    res.json({ data: result.rows });
+  } catch (err: any) {
+    console.error('[RDS Insert History Error]:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/db/history/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pool = await getRdsPool();
+    if (!pool) return res.status(503).json({ error: 'RDS_NOT_CONFIGURED' });
+    await pool.query('DELETE FROM repo_history WHERE id = $1', [id]);
+    res.json({ data: null });
+  } catch (err: any) {
+    console.error('[RDS Delete History Error]:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });

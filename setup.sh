@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# REPOLENS - AWS EC2 Setup Script (Ubuntu 22.04 LTS)
+# REPOLENS - AWS EC2 + Amazon RDS Setup Script (Ubuntu LTS)
 # Run this script on your EC2 instance after SSH-ing in.
 # Usage: bash setup.sh
 # ============================================================
@@ -8,7 +8,7 @@
 set -e
 
 echo "=========================================="
-echo "  REPOLENS - EC2 Setup Script"
+echo "  REPOLENS - EC2 + RDS Setup Script"
 echo "=========================================="
 
 # ── 1. System Update ─────────────────────────────────────────
@@ -46,21 +46,23 @@ else
   cd REPOLENS
 fi
 
-# ── 6. Install Dependencies ──────────────────────────────────
-echo "[6/7] Installing npm dependencies..."
+# ── 6. Install Dependencies (including PostgreSQL driver) ────
+echo "[6/7] Installing npm dependencies & PostgreSQL (pg) driver..."
 npm install
+npm install pg
 
 # ── 7. Create .env file ──────────────────────────────────────
-echo "[7/7] Creating .env template..."
-# ⚠️  Fill in your actual keys after setup completes
+echo "[7/7] Creating .env template with your Amazon RDS endpoint..."
+# ⚠️  Replace YOUR_DB_PASSWORD and API keys after setup completes
 cat > .env << 'EOF'
+GEMINI_API_KEY=your_gemini_api_key_here
 GROQ_API_KEY=your_groq_api_key_here
-VITE_SUPABASE_URL=
-VITE_SUPABASE_ANON_KEY=
+DATABASE_URL=postgresql://postgres:YOUR_DB_PASSWORD@repolens-db.c16k2muq017f.ap-south-1.rds.amazonaws.com:5432/postgres
 NODE_ENV=production
+PORT=3000
 EOF
 echo ""
-echo "⚠️  IMPORTANT: Edit .env and add your GROQ_API_KEY:"
+echo "⚠️  IMPORTANT: Edit .env and replace YOUR_DB_PASSWORD and API keys:"
 echo "    nano /home/ubuntu/REPOLENS/.env"
 
 echo ""

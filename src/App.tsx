@@ -513,13 +513,6 @@ export default function App() {
               <h2 className="text-xl font-bold mb-3 font-sans">
                 {isSignUp ? 'Create Account' : 'Sign In'}
               </h2>
-
-              {!isSupabaseConfigured && (
-                <div className="mb-4 text-[11px] text-slate-600 bg-slate-50 border border-slate-200 p-2.5 rounded-sm">
-                  <span className="font-semibold text-slate-800 block mb-0.5">Local Storage Mode</span>
-                  Cloud Supabase is not configured. Creating an account or signing in will safely save your decoded repository history in your browser local storage.
-                </div>
-              )}
               
               {authError && (
                 <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm border border-red-200">

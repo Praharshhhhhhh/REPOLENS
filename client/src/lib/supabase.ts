@@ -3,8 +3,6 @@ import { createClient } from '@supabase/supabase-js';
 const rawUrl = (import.meta.env.VITE_SUPABASE_URL || '').trim();
 const rawKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
 
-// Determine if valid, reachable Supabase credentials are configured
-// Specifically excludes invalid, dummy, or deleted prototype hosts (e.g. untpyathubtdiqfaobfc)
 export const isSupabaseConfigured = Boolean(
   rawUrl &&
   rawKey &&
@@ -17,7 +15,6 @@ export const isSupabaseConfigured = Boolean(
 const LOCAL_STORAGE_SESSION_KEY = 'repolens_local_auth_session';
 const LOCAL_STORAGE_HISTORY_KEY = 'repolens_local_history';
 
-// Helper to manage listeners for local fallback auth
 type AuthListener = (event: string, session: any) => void;
 const localAuthListeners: Set<AuthListener> = new Set();
 
@@ -40,8 +37,10 @@ const notifyLocalListeners = (event: string, session: any) => {
   });
 };
 
-// Fallback client for offline/local operation
-const localFallbackClient = {
+// ============================================================
+// Amazon RDS Backend Client + Automatic Local Storage Fallback
+// ============================================================
+const rdsAndLocalClient = {
   auth: {
     getSession: async () => {
       const session = getStoredLocalSession();
@@ -67,11 +66,34 @@ const localFallbackClient = {
       return {
         data: null,
         error: new Error(
-          'GitHub OAuth requires a Supabase cloud project. Please configure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your environment.'
+          'Please sign in using Email & Password (connected to Amazon RDS PostgreSQL).'
         )
       };
     },
-    signUp: async ({ email }: { email: string; password?: string }) => {
+    signUp: async ({ email, password }: { email: string; password?: string }) => {
+      // 1. Try Amazon RDS Backend first
+      try {
+        const res = await fetch('/api/db/signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        if (res.status !== 503) {
+          const data = await res.json();
+          if (!res.ok) {
+            return { data: null, error: new Error(data.error || 'Signup failed') };
+          }
+          try {
+            localStorage.setItem(LOCAL_STORAGE_SESSION_KEY, JSON.stringify(data.session));
+          } catch {}
+          notifyLocalListeners('SIGNED_IN', data.session);
+          return { data: { user: data.user, session: data.session }, error: null };
+        }
+      } catch (_) {
+        // Fall through to local fallback if RDS is not configured
+      }
+
+      // 2. Local Fallback
       const mockUser = {
         id: 'local_user_' + Math.abs(email.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)),
         email,
@@ -84,7 +106,30 @@ const localFallbackClient = {
       notifyLocalListeners('SIGNED_IN', session);
       return { data: { user: mockUser, session }, error: null };
     },
-    signInWithPassword: async ({ email }: { email: string; password?: string }) => {
+    signInWithPassword: async ({ email, password }: { email: string; password?: string }) => {
+      // 1. Try Amazon RDS Backend first
+      try {
+        const res = await fetch('/api/db/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        if (res.status !== 503) {
+          const data = await res.json();
+          if (!res.ok) {
+            return { data: null, error: new Error(data.error || 'Invalid login credentials') };
+          }
+          try {
+            localStorage.setItem(LOCAL_STORAGE_SESSION_KEY, JSON.stringify(data.session));
+          } catch {}
+          notifyLocalListeners('SIGNED_IN', data.session);
+          return { data: { user: data.user, session: data.session }, error: null };
+        }
+      } catch (_) {
+        // Fall through to local fallback if RDS is not configured
+      }
+
+      // 2. Local Fallback
       const mockUser = {
         id: 'local_user_' + Math.abs(email.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)),
         email,
@@ -123,18 +168,40 @@ const localFallbackClient = {
     return {
       select: (_cols = '*') => ({
         eq: (col: string, val: any) => ({
-          order: (orderCol: string, { ascending = true }: { ascending?: boolean } = {}) => {
+          order: async (orderCol: string, { ascending = true }: { ascending?: boolean } = {}) => {
+            if (table === 'repo_history' && col === 'user_id') {
+              try {
+                const res = await fetch(`/api/db/history?user_id=${encodeURIComponent(val)}`);
+                if (res.ok) {
+                  const json = await res.json();
+                  return { data: json.data || [], error: null };
+                }
+              } catch (_) {}
+            }
             const all = getLocalRows().filter(row => row[col] === val);
             all.sort((a, b) => {
               const va = a[orderCol] ?? '';
               const vb = b[orderCol] ?? '';
               return ascending ? (va > vb ? 1 : -1) : (va < vb ? 1 : -1);
             });
-            return Promise.resolve({ data: all, error: null });
+            return { data: all, error: null };
           }
         })
       }),
-      insert: (row: any) => {
+      insert: async (row: any) => {
+        if (table === 'repo_history') {
+          try {
+            const res = await fetch('/api/db/history', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(row)
+            });
+            if (res.ok) {
+              const json = await res.json();
+              return { data: json.data, error: null };
+            }
+          } catch (_) {}
+        }
         const all = getLocalRows();
         const newItem = {
           id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
@@ -143,20 +210,29 @@ const localFallbackClient = {
         };
         all.unshift(newItem);
         saveLocalRows(all);
-        return Promise.resolve({ data: [newItem], error: null });
+        return { data: [newItem], error: null };
       },
       delete: () => ({
-        eq: (col: string, val: any) => {
+        eq: async (col: string, val: any) => {
+          if (table === 'repo_history' && col === 'id') {
+            try {
+              const res = await fetch(`/api/db/history/${encodeURIComponent(val)}`, {
+                method: 'DELETE'
+              });
+              if (res.ok) {
+                return { data: null, error: null };
+              }
+            } catch (_) {}
+          }
           const all = getLocalRows().filter(row => row[col] !== val);
           saveLocalRows(all);
-          return Promise.resolve({ data: null, error: null });
+          return { data: null, error: null };
         }
       })
     };
   }
 };
 
-// Create real client only if configured with a real host; otherwise default to local storage fallback
 let rawClientInstance: any = null;
 if (isSupabaseConfigured) {
   try {
@@ -171,5 +247,4 @@ if (isSupabaseConfigured) {
   }
 }
 
-// Resilient wrapper: if remote network calls fail with Failed to fetch, seamlessly falls back to local client
-export const supabase = rawClientInstance || (localFallbackClient as any);
+export const supabase = rawClientInstance || (rdsAndLocalClient as any);
