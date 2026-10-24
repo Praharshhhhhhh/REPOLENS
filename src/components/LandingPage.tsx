@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Zap, Brain, Compass, LineChart } from 'lucide-react';
+import { Zap, Brain, Compass, Key, CheckCircle, UploadCloud, AlertCircle } from 'lucide-react';
+import { FloatingPaths } from './ui/background-paths';
 
 interface LandingPageProps {
   repoUrl: string;
@@ -10,9 +11,9 @@ interface LandingPageProps {
   getInputProps: any;
   isDragActive: boolean;
   error: string | null;
+  onOpenTokenModal?: () => void;
+  hasGitHubToken?: boolean;
 }
-
-import { FloatingPaths } from './ui/background-paths';
 
 export const SparkleButton = ({ children, onClick, className = '' }: any) => {
   const [particles, setParticles] = useState<{id: number, x: number, y: number}[]>([]);
@@ -62,7 +63,6 @@ const FeatureCard = ({ icon: Icon, title, desc, delay, className = '' }: any) =>
       onHoverEnd={() => setIsHovered(false)}
       className={`editorial-card relative overflow-hidden group ${className}`}
     >
-      {/* Border Beam / Spotlight */}
       <motion.div
         animate={{ opacity: isHovered ? 1 : 0 }}
         className="absolute inset-0 border-2 border-primary/20 pointer-events-none transition-opacity duration-300"
@@ -89,15 +89,18 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   getRootProps,
   getInputProps,
   isDragActive,
-  error
+  error,
+  onOpenTokenModal,
+  hasGitHubToken
 }) => {
+  const isRateLimitError = error && (error.toLowerCase().includes('rate limit') || error.toLowerCase().includes('403'));
+
   return (
     <div className="relative w-full min-h-screen pb-32">
       {/* Background with Stars and Waves */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none z-[0] opacity-60">
         <FloatingPaths position={1} />
         <FloatingPaths position={-1} />
-        {/* Layered Mountain / Wave Silhouette */}
         <motion.div 
           initial={{ opacity: 0, y: 50 }}
           animate={{ opacity: 1, y: 0 }}
@@ -113,10 +116,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         </motion.div>
       </div>
 
-      {/* Main Content Layout similar to screenshot */}
-      <div className="relative z-10 w-full h-screen flex flex-col pt-32 px-6">
-        {/* Hero Top Title */}
-        <div className="text-center space-y-4 max-w-4xl mx-auto flex-1 mt-[10vh]">
+      <div className="relative z-10 w-full flex flex-col pt-32 px-6">
+        <div className="text-center space-y-4 max-w-4xl mx-auto mt-[6vh] mb-12">
           <motion.h1 
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -135,21 +136,35 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         </div>
       </div>
 
-      <div className="relative z-10 max-w-6xl mx-auto px-6 space-y-16 lg:pl-32">
+      <div className="relative z-10 max-w-6xl mx-auto px-6 space-y-16">
         {/* Input Section */}
         <section className="max-w-2xl mx-auto w-full">
-          <div className="editorial-card bg-white/80 backdrop-blur-md text-left space-y-10 shadow-2xl shadow-black/5 border-black/10">
-            <div className="space-y-6">
-              <div className="flex items-center gap-2">
+          <div className="editorial-card bg-white/80 backdrop-blur-md text-left space-y-8 shadow-2xl shadow-black/5 border-black/10">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-2">
                 <span className="text-editorial-label italic">Source Input</span>
-                <div className="h-px flex-1 bg-black/5" />
+                {onOpenTokenModal && (
+                  <button
+                    onClick={onOpenTokenModal}
+                    type="button"
+                    className="flex items-center gap-1.5 text-[11px] font-sans uppercase tracking-wider text-black/60 hover:text-black transition-colors"
+                  >
+                    <Key size={12} className={hasGitHubToken ? "text-emerald-600" : ""} />
+                    <span>{hasGitHubToken ? 'Token Active' : 'GitHub Token (Optional)'}</span>
+                    {hasGitHubToken && <CheckCircle size={10} className="text-emerald-600" />}
+                  </button>
+                )}
               </div>
+
               <div className="flex flex-col md:flex-row gap-0 border border-black/10">
                 <input
                   type="text"
                   placeholder="github.com/user/repo"
                   value={repoUrl}
                   onChange={(e) => setRepoUrl(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') onDecode();
+                  }}
                   className="flex-1 bg-white/50 px-6 py-4 font-sans text-xs outline-none focus:bg-white transition-colors placeholder:opacity-30 border-r border-black/10"
                 />
                 <SparkleButton
@@ -159,26 +174,57 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   PROCESS
                 </SparkleButton>
               </div>
+
+              <div className="flex items-center justify-between text-[10px] font-sans text-black/50 px-1 pt-1">
+                <span>Public repos automatically bypass rate limits via high-speed archive fallback.</span>
+                {onOpenTokenModal && !hasGitHubToken && (
+                  <button 
+                    onClick={onOpenTokenModal}
+                    className="underline hover:text-black transition-colors"
+                  >
+                    Add PAT for 5,000/hr
+                  </button>
+                )}
+              </div>
             </div>
 
             <div
               {...getRootProps()}
-              className={`h-40 w-full border border-dashed border-black/20 flex flex-col items-center justify-center bg-white/50 cursor-pointer transition-all
+              className={`h-36 w-full border border-dashed border-black/20 flex flex-col items-center justify-center bg-white/50 cursor-pointer transition-all
                 ${isDragActive ? 'bg-primary/5 border-primary/40' : 'hover:bg-white hover:border-black/30'}`}
             >
               <input {...getInputProps()} />
-              <span className="text-editorial-label italic opacity-40">Drop archive here</span>
+              <UploadCloud size={20} className="opacity-40 mb-2" />
+              <span className="text-editorial-label italic opacity-60">Drop ZIP archive here</span>
+              <span className="text-[10px] font-sans uppercase tracking-wider opacity-40 mt-1">Direct offline unpack without any API limits</span>
             </div>
           </div>
 
           {error && (
-            <motion.p
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="max-w-2xl mx-auto text-red-600 font-sans text-[10px] uppercase tracking-widest italic mt-6 text-center"
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="max-w-2xl mx-auto mt-6 p-4 rounded border border-red-300 bg-red-50/95 text-red-900 font-sans text-xs space-y-3 backdrop-blur-sm"
             >
-              Error: {error}
-            </motion.p>
+              <div className="flex items-center gap-2 font-semibold uppercase tracking-wider text-[11px] text-red-700">
+                <AlertCircle size={14} className="text-red-600 shrink-0" />
+                {isRateLimitError ? 'GitHub API Rate Limit Notice' : 'Analysis Notice'}
+              </div>
+              <p className="leading-relaxed opacity-90">{error}</p>
+
+              {/* Actionable buttons for rate limit */}
+              {isRateLimitError && onOpenTokenModal && (
+                <div className="pt-2 border-t border-red-200 flex flex-wrap items-center gap-3">
+                  <button
+                    onClick={onOpenTokenModal}
+                    className="bg-black text-white px-3 py-1.5 text-[11px] font-sans uppercase tracking-wider hover:bg-neutral-800 transition-colors flex items-center gap-1.5"
+                  >
+                    <Key size={12} /> Add GitHub Token
+                  </button>
+                  <span className="text-[11px] text-red-700">or drop a ZIP archive of the repository above</span>
+                </div>
+              )}
+            </motion.div>
           )}
         </section>
 
@@ -187,34 +233,26 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <FeatureCard
             icon={Zap}
             title="Rapid Ingestion"
-            desc="Millisecond processing using optimized vector techniques."
+            desc="Instant processing using zero-limit archive streaming and vectorized token management."
             delay={0}
             className="md:col-span-2 min-h-[220px] bg-white/80 backdrop-blur-md"
           />
           <FeatureCard
             icon={Brain}
             title="Contextual AI"
-            desc="Advanced logic explanation and mapping."
+            desc="Advanced logic explanation, architecture synthesis, and intelligent Q&A."
             delay={0.1}
             className="md:col-span-1 min-h-[220px] bg-white/80 backdrop-blur-md"
           />
           <FeatureCard
             icon={Compass}
             title="Node Mapping"
-            desc="Navigable visual layouts."
+            desc="Interactive multi-dimensional visualization of project dependency trees."
             delay={0.2}
-            className="md:col-span-1 min-h-[220px] bg-white/80 backdrop-blur-md"
-          />
-          <FeatureCard
-            icon={LineChart}
-            title="Metrics Overview"
-            desc="Holistic analysis of codebase structure."
-            delay={0.3}
-            className="md:col-span-2 min-h-[220px] bg-white/80 backdrop-blur-md"
+            className="md:col-span-3 min-h-[200px] bg-white/80 backdrop-blur-md"
           />
         </section>
       </div>
     </div>
   );
 };
-

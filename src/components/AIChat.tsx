@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { motion } from 'motion/react';
-import { Send, Bot, User, Loader2 } from 'lucide-react';
+import { Send, Bot, User, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { askRepositoryQuestion } from '../services/aiService';
 import { FileNode, RepoAnalysis } from '../types';
@@ -8,6 +7,7 @@ import { FileNode, RepoAnalysis } from '../types';
 interface Message {
   role: 'user' | 'model';
   text: string;
+  isError?: boolean;
 }
 
 interface AIChatProps {
@@ -17,7 +17,7 @@ interface AIChatProps {
 
 export const AIChat: React.FC<AIChatProps> = ({ files, analysis }) => {
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'model', text: 'Hello! I have analyzed the repository. What would you like to know?' }
+    { role: 'model', text: 'Hello! I have analyzed the repository. What would you like to know about its architecture, flow, or code?' }
   ]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -27,43 +27,86 @@ export const AIChat: React.FC<AIChatProps> = ({ files, analysis }) => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
-  const handleSend = async () => {
-    if (!input.trim() || isTyping) return;
+  const handleSend = async (overrideMessage?: string) => {
+    const userMessage = (overrideMessage || input).trim();
+    if (!userMessage || isTyping) return;
     
-    const userMessage = input.trim();
-    setInput('');
-    setMessages(prev => [...prev, { role: 'user', text: userMessage }]);
+    if (!overrideMessage) {
+      setInput('');
+      setMessages(prev => [...prev, { role: 'user', text: userMessage }]);
+    }
     setIsTyping(true);
 
     try {
       const responseText = await askRepositoryQuestion(userMessage, messages, files, analysis);
       setMessages(prev => [...prev, { role: 'model', text: responseText }]);
-    } catch (error) {
-      setMessages(prev => [...prev, { role: 'model', text: 'Sorry, I encountered an error while analyzing the repository.' }]);
+    } catch (error: any) {
+      const errorMsg = error?.message || 'Failed to get AI response';
+      setMessages(prev => [
+        ...prev, 
+        { 
+          role: 'model', 
+          text: `⚠️ **Unable to complete response:** ${errorMsg}\n\n*Tip: If you hit a Groq free-tier rate limit, wait 10 seconds before asking again.*`,
+          isError: true
+        }
+      ]);
     } finally {
       setIsTyping(false);
     }
   };
 
+  const handleRetryLast = () => {
+    // Find last user message
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        handleSend(messages[i].text);
+        break;
+      }
+    }
+  };
+
   return (
     <div className="flex flex-col h-full bg-white border border-black/10 rounded-sm overflow-hidden shadow-sm relative z-10">
-      <div className="bg-slate-50 border-b border-black/5 px-4 py-3 flex items-center gap-2">
-        <Bot size={16} className="text-primary" />
-        <h3 className="font-sans text-[11px] uppercase tracking-widest font-semibold">Repository Chat</h3>
+      <div className="bg-slate-50 border-b border-black/5 px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Bot size={16} className="text-primary" />
+          <h3 className="font-sans text-[11px] uppercase tracking-widest font-semibold">Repository Chat</h3>
+        </div>
+        <span className="text-[10px] text-black/40 font-mono">Groq Powered</span>
       </div>
       
       <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-[#fafafa]">
         {messages.map((msg, idx) => (
           <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-            <div className={`w-6 h-6 rounded-sm flex items-center justify-center shrink-0 ${msg.role === 'user' ? 'bg-black text-white' : 'bg-primary text-white'}`}>
-              {msg.role === 'user' ? <User size={12} /> : <Bot size={12} />}
+            <div className={`w-6 h-6 rounded-sm flex items-center justify-center shrink-0 ${
+              msg.role === 'user' 
+                ? 'bg-black text-white' 
+                : msg.isError 
+                  ? 'bg-amber-600 text-white' 
+                  : 'bg-primary text-white'
+            }`}>
+              {msg.role === 'user' ? <User size={12} /> : msg.isError ? <AlertCircle size={12} /> : <Bot size={12} />}
             </div>
-            <div className={`max-w-[85%] text-[13px] leading-relaxed ${msg.role === 'user' ? 'bg-black text-white px-4 py-2 rounded-sm rounded-tr-none' : 'bg-white border border-black/5 px-4 py-2 rounded-sm rounded-tl-none shadow-sm'}`}>
+            <div className={`max-w-[85%] text-[13px] leading-relaxed ${
+              msg.role === 'user' 
+                ? 'bg-black text-white px-4 py-2 rounded-sm rounded-tr-none' 
+                : msg.isError
+                  ? 'bg-amber-50/80 border border-amber-200/60 px-4 py-2.5 rounded-sm rounded-tl-none text-slate-800 shadow-sm'
+                  : 'bg-white border border-black/5 px-4 py-2 rounded-sm rounded-tl-none shadow-sm'
+            }`}>
               {msg.role === 'user' ? (
                 <span>{msg.text}</span>
               ) : (
                 <div className="markdown-body prose prose-slate prose-sm !max-w-none text-[13px]">
                   <ReactMarkdown>{msg.text}</ReactMarkdown>
+                  {msg.isError && (
+                    <button
+                      onClick={handleRetryLast}
+                      className="mt-2.5 inline-flex items-center gap-1.5 text-[11px] font-sans font-medium text-amber-900 bg-amber-100 hover:bg-amber-200 px-2.5 py-1 rounded transition-colors"
+                    >
+                      <RefreshCw size={11} /> Retry Question
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -92,7 +135,7 @@ export const AIChat: React.FC<AIChatProps> = ({ files, analysis }) => {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask about authentication, API routes..."
+            placeholder="Ask about architecture, entry points, auth flow..."
             className="flex-1 bg-slate-50 border border-black/10 rounded-sm px-3 py-2 text-[13px] outline-none focus:border-primary/50 transition-colors placeholder:text-black/30"
           />
           <button 

@@ -1,16 +1,17 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Terminal, Github, FileUp, ChevronRight, Bolt, Shield, Activity, Globe, ArrowLeft, Loader2, Search, LogOut, History, User, Mail, Trash2 } from 'lucide-react';
+import { Terminal, Github, FileUp, ChevronRight, Bolt, Shield, Activity, Globe, ArrowLeft, Loader2, Search, LogOut, History, User, Mail, Trash2, Key, CheckCircle, AlertCircle } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import JSZip from 'jszip';
 import { analyzeCodebase } from './services/aiService';
+import { fetchRepositoryData, fetchFileContent, parseGitHubUrl, getStoredGitHubToken, setStoredGitHubToken } from './services/githubService';
 import { FileNode, RepoAnalysis } from './types';
 import { RepoVisualizer } from './components/RepoVisualizer';
 import { LandingPage } from './components/LandingPage';
 import { AIChat } from './components/AIChat';
 import ReactMarkdown from 'react-markdown';
 import { FloatingPaths } from './components/ui/background-paths';
-import { supabase } from './lib/supabase';
+import { supabase, isSupabaseConfigured } from './lib/supabase';
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
@@ -24,46 +25,53 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
 
+  // GitHub Personal Access Token management (bypasses 60 req/hr rate limit or accesses private repos)
+  const [githubToken, setGithubToken] = useState<string>(() => getStoredGitHubToken());
+  const [showTokenModal, setShowTokenModal] = useState(false);
+  const [tokenInput, setTokenInput] = useState('');
+  const [rateLimitNotice, setRateLimitNotice] = useState<string | null>(null);
+  const [currentBranch, setCurrentBranch] = useState<string>('main');
+
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      if (session?.user) fetchHistory(session.user.id);
-    });
+    supabase.auth.getSession()
+      .then(({ data }: any) => {
+        const session = data?.session;
+        setUser(session?.user ?? null);
+        if (session?.user) fetchHistory(session.user.id);
+      })
+      .catch((err: any) => {
+        console.warn('Initial session check notice:', err?.message || err);
+      });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      if (session?.user) fetchHistory(session.user.id);
-    });
+    let subscription: any = null;
+    try {
+      const res = supabase.auth.onAuthStateChange((_event: any, session: any) => {
+        setUser(session?.user ?? null);
+        if (session?.user) fetchHistory(session.user.id);
+      });
+      subscription = res?.data?.subscription;
+    } catch (err: any) {
+      console.warn('Auth state change subscription error:', err?.message || err);
+    }
 
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription?.unsubscribe?.();
+    };
   }, []);
 
   const fetchHistory = async (userId: string) => {
-    const { data, error } = await supabase.from('repo_history').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-    if (error) {
-      console.error('Error fetching history:', error);
+    try {
+      const { data, error } = await supabase.from('repo_history').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+      if (error) {
+        console.warn('Notice fetching history:', error.message || error);
+      }
+      if (data) setHistory(data);
+    } catch (err: any) {
+      console.warn('Failed to query user history records:', err?.message || err);
     }
-    if (data) setHistory(data);
   };
 
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      const origin = event.origin;
-      if (!origin.endsWith('.run.app') && !origin.includes('localhost')) {
-        return;
-      }
-      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
-        supabase.auth.getSession().then(({ data: { session } }) => {
-           setUser(session?.user ?? null);
-           if (session?.user) fetchHistory(session.user.id);
-        });
-      }
-    };
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, []);
-
-  const handleGithubLogin = async () => {
+  const handleOAuthLogin = async () => {
     try {
       setAuthError('');
       const { data, error } = await supabase.auth.signInWithOAuth({
@@ -94,7 +102,13 @@ export default function App() {
       if (isSignUp) {
         const { error } = await supabase.auth.signUp({ email: authEmail, password: authPassword });
         if (error) throw error;
-        alert('Sign up successful! Please check your email for verification.');
+        if (isSupabaseConfigured) {
+          alert('Sign up successful! Please check your email for verification.');
+        } else {
+          setShowAuthModal(false);
+          setAuthEmail('');
+          setAuthPassword('');
+        }
         setIsSignUp(false);
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
@@ -112,7 +126,13 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+      setUser(null);
+      setHistory([]);
+    } catch (err: any) {
+      console.warn('Sign out notice:', err?.message || err);
+    }
   };
 
   const handleDeleteHistory = async (id: string, e: React.MouseEvent) => {
@@ -182,20 +202,20 @@ export default function App() {
     setFileExplanation(null);
     setIsExplaining(true);
 
+    // If file content isn't pre-loaded, fetch via our rate-limit-immune raw proxy
     if (!fetchedContent && repoUrl && repoUrl.includes('github.com')) {
       try {
-        const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
-        if (match) {
-          const owner = match[1];
-          const repo = match[2].replace(/\.git$/, '');
-          const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${file.path}`, {
-            headers: { 'Accept': 'application/vnd.github.v3.raw' }
-          });
-          if (res.ok) {
-            fetchedContent = await res.text();
-            displayFile.content = fetchedContent;
-            setSelectedFile({...displayFile}); // force update
-          }
+        const parsed = parseGitHubUrl(repoUrl);
+        if (parsed) {
+          fetchedContent = await fetchFileContent(
+            parsed.owner,
+            parsed.repo,
+            currentBranch,
+            file.path,
+            githubToken
+          );
+          displayFile.content = fetchedContent;
+          setSelectedFile({ ...displayFile });
         }
       } catch (err) {
         console.error("Failed to fetch raw file", err);
@@ -216,8 +236,7 @@ export default function App() {
     } catch (e) {
       setIsExplaining(false);
     }
-  }, [files, repoUrl]);
-
+  }, [files, repoUrl, currentBranch, githubToken]);
 
   const onDrop = async (acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
@@ -225,6 +244,7 @@ export default function App() {
 
     setIsAnalyzing(true);
     setError(null);
+    setRateLimitNotice(null);
     try {
       if (file.name.endsWith('.zip')) {
         const zip = new JSZip();
@@ -236,11 +256,11 @@ export default function App() {
             if (path.includes('node_modules/') || path.includes('.git/') || path.includes('dist/') || path.includes('build/')) {
               continue;
             }
-            // Read content of small files only to avoid memory issues
             let fileContent;
-            // Ignore obvious binary extensions
-            if (!path.match(/\.(png|jpg|jpeg|gif|ico|pdf|zip|tar|gz|mp4)$/i)) {
-              fileContent = await zipEntry.async("string");
+            if (!path.match(/\.(png|jpg|jpeg|gif|ico|pdf|zip|tar|gz|mp4|webp|svg|woff|woff2|ttf|eot)$/i)) {
+              try {
+                fileContent = await zipEntry.async("string");
+              } catch (_) {}
             }
             extractedFiles.push({
               path,
@@ -254,19 +274,23 @@ export default function App() {
         setAnalysis(result);
 
         if (user) {
-          const archiveUrl = `Archive: ${file.name}`;
-          const { error: dbError } = await supabase.from('repo_history').insert({ user_id: user.id, repo_url: archiveUrl });
-          if (dbError) {
-            console.error("Error saving history:", dbError.message);
+          try {
+            const archiveUrl = `Archive: ${file.name}`;
+            const { error: dbError } = await supabase.from('repo_history').insert({ user_id: user.id, repo_url: archiveUrl });
+            if (dbError) {
+              console.warn("History save note:", dbError.message);
+            }
+            fetchHistory(user.id);
+          } catch (histErr) {
+            console.warn("History save note:", histErr);
           }
-          fetchHistory(user.id);
         }
       } else {
-        setError('Please upload a ZIP file or provide a GitHub link.');
+        setError('Please upload a ZIP file or provide a valid GitHub link.');
       }
     } catch (err: any) {
       console.error("ZIP processing error:", err);
-      setError(err.message || 'Neural calibration failed. Please verify file integrity.');
+      setError(err.message || 'Archive processing failed. Please verify file integrity.');
     } finally {
       setIsAnalyzing(false);
     }
@@ -289,57 +313,36 @@ export default function App() {
 
     setIsAnalyzing(true);
     setError(null);
+    setRateLimitNotice(null);
+
     try {
-      const match = url.match(/github\.com\/([^/]+)\/([^/]+)/);
-      if (!match) throw new Error("Could not parse GitHub URL. Ensure it looks like github.com/owner/repo");
-      const owner = match[1];
-      const repo = match[2].replace(/\.git$/, '');
+      // Ingest repository files via multi-tier fallback pipeline (immune to GitHub 60 req/hr limit)
+      const repoData = await fetchRepositoryData(url, githubToken);
+      
+      setCurrentBranch(repoData.defaultBranch || 'main');
+      setFiles(repoData.files);
 
-      // Get default branch
-      const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`);
-      if (!repoRes.ok) {
-        let msg = "Could not fetch repo details. Is it a valid public repository?";
-        if (repoRes.status === 403) msg = "GitHub API rate limit exceeded. Please try again later or upload a ZIP archive instead.";
-        else if (repoRes.status === 404) msg = "Repository not found. Is it private or deleted?";
-        throw new Error(msg);
+      if (repoData.rateLimitBypassed) {
+        setRateLimitNotice(repoData.message || 'Loaded via high-speed archive pipeline to bypass GitHub API rate limit.');
       }
-      const repoData = await repoRes.json();
-      const defaultBranch = repoData.default_branch;
 
-      // Get tree
-      const treeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${defaultBranch}?recursive=1`);
-      if (!treeRes.ok) throw new Error("Could not fetch repo tree.");
-      const treeData = await treeRes.json();
-
-
-      const newFiles: FileNode[] = treeData.tree
-        .filter((item: any) => !item.path.includes('node_modules/') && !item.path.includes('.git/') && !item.path.includes('dist/') && !item.path.includes('build/'))
-        .map((item: any) => ({
-          path: item.path,
-          type: item.type === 'blob' ? 'file' : 'dir',
-          size: item.size
-        }));
-
-      setFiles(newFiles);
-
-      const result = await analyzeCodebase(newFiles, url);
+      const result = await analyzeCodebase(repoData.files, url);
       setAnalysis(result);
       
       if (user) {
-        const { error } = await supabase.from('repo_history').insert({ user_id: user.id, repo_url: url });
-        if (error) {
-          console.error("Error saving history:", error.message);
-          // Don't alert here to avoid stopping the main flow, but we log the error.
-          // If the table doesn't exist, this is usually the issue:
-          if (error.code === '42P01') {
-            alert('Supabase table "repo_history" does not exist. Please create it in your Supabase project with columns: id, user_id, repo_url, created_at.');
+        try {
+          const { error } = await supabase.from('repo_history').insert({ user_id: user.id, repo_url: url });
+          if (error) {
+            console.warn("History save note:", error.message);
           }
+          fetchHistory(user.id);
+        } catch (histErr) {
+          console.warn("History save note:", histErr);
         }
-        fetchHistory(user.id);
       }
     } catch (err: any) {
       console.error("Decode error:", err);
-      setError(err.message || 'Protocol error: Failed to fetch repository data.');
+      setError(err.message || 'Failed to fetch repository data.');
     } finally {
       setIsAnalyzing(false);
     }
@@ -359,7 +362,20 @@ export default function App() {
           <span className="text-[11px] uppercase tracking-widest font-sans opacity-60 hidden sm:block">The Repository Intelligence Engine</span>
         </div>
         
-        <div className="hidden md:flex items-center gap-10 font-sans text-[11px] uppercase tracking-widest opacity-60">
+        <div className="hidden md:flex items-center gap-8 font-sans text-[11px] uppercase tracking-widest opacity-60">
+          <button 
+            onClick={() => {
+              setTokenInput(githubToken);
+              setShowTokenModal(true);
+            }} 
+            className="hover:opacity-100 transition-opacity flex items-center gap-1.5"
+            title="Configure GitHub Personal Access Token to increase rate limits to 5,000/hr"
+          >
+            <Key size={12} className={githubToken ? "text-emerald-600" : ""} />
+            <span>{githubToken ? 'Token (Active)' : 'GitHub Token'}</span>
+            {githubToken && <CheckCircle size={10} className="text-emerald-600" />}
+          </button>
+
           <a href="#" onClick={(e) => { e.preventDefault(); window.scrollTo({top: 0, behavior: 'smooth'}); }} className="hover:opacity-100 transition-opacity">Platform</a>
           <a href="https://github.com/Praharshhhhhhh/REPOLENS" target="_blank" rel="noopener noreferrer" className="hover:opacity-100 transition-opacity">Documentation</a>
           {user ? (
@@ -376,6 +392,7 @@ export default function App() {
           onClick={() => {
             setAnalysis(null);
             setFiles([]);
+            setRateLimitNotice(null);
             setTimeout(() => {
               const repoInput = document.querySelector('input') as HTMLInputElement;
               if (repoInput) {
@@ -390,6 +407,90 @@ export default function App() {
           Generate Intel
         </button>
       </nav>
+
+      {/* GitHub Token Modal */}
+      <AnimatePresence>
+        {showTokenModal && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowTokenModal(false);
+            }}
+          >
+            <div className="bg-white border border-black/10 shadow-2xl p-8 max-w-md w-full relative">
+              <button 
+                onClick={() => setShowTokenModal(false)}
+                className="absolute top-4 right-4 opacity-50 hover:opacity-100 transition-opacity"
+              >✕</button>
+              
+              <div className="flex items-center gap-2 mb-2">
+                <Key size={18} className="text-primary" />
+                <h2 className="text-xl font-bold font-sans">GitHub Access Token</h2>
+              </div>
+              
+              <p className="text-xs text-black/60 font-sans leading-relaxed mb-4">
+                Unauthenticated requests to the GitHub API are limited to 60 requests/hour. Adding a Personal Access Token increases your limit to <strong>5,000 requests/hour</strong> and unlocks access to private repositories.
+              </p>
+
+              <div className="space-y-4 mb-6">
+                <div>
+                  <label className="block text-[11px] uppercase tracking-widest opacity-60 mb-1 font-sans">Personal Access Token (PAT)</label>
+                  <input 
+                    type="password" 
+                    placeholder="ghp_... or github_pat_..."
+                    value={tokenInput}
+                    onChange={(e) => setTokenInput(e.target.value)}
+                    className="w-full border border-black/10 px-3 py-2 text-sm font-mono focus:outline-none focus:border-primary"
+                  />
+                </div>
+
+                <div className="text-[11px] text-black/60 bg-slate-50 p-3 rounded border border-slate-200 leading-normal">
+                  <span className="font-semibold block mb-0.5 text-black">Private & Stored Locally</span>
+                  Your token is stored only in your browser local storage and sent with requests to GitHub. Public repositories also use our automatic archive pipeline if rate-limited.
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                {githubToken ? (
+                  <button
+                    onClick={() => {
+                      setStoredGitHubToken('');
+                      setGithubToken('');
+                      setTokenInput('');
+                      setShowTokenModal(false);
+                    }}
+                    className="text-xs text-red-600 hover:underline uppercase tracking-wider font-sans"
+                  >
+                    Remove Token
+                  </button>
+                ) : <div />}
+                
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowTokenModal(false)}
+                    className="px-4 py-2 text-xs uppercase tracking-wider border border-black/10 hover:bg-black/5 font-sans"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      setStoredGitHubToken(tokenInput);
+                      setGithubToken(tokenInput.trim());
+                      setShowTokenModal(false);
+                    }}
+                    className="bg-black text-white px-5 py-2 text-xs uppercase tracking-wider hover:bg-neutral-800 font-sans"
+                  >
+                    Save Token
+                  </button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Auth Modal */}
       <AnimatePresence>
@@ -409,9 +510,16 @@ export default function App() {
                 className="absolute top-4 right-4 opacity-50 hover:opacity-100 transition-opacity"
               >✕</button>
               
-              <h2 className="text-xl font-bold mb-6 font-sans">
+              <h2 className="text-xl font-bold mb-3 font-sans">
                 {isSignUp ? 'Create Account' : 'Sign In'}
               </h2>
+
+              {!isSupabaseConfigured && (
+                <div className="mb-4 text-[11px] text-slate-600 bg-slate-50 border border-slate-200 p-2.5 rounded-sm">
+                  <span className="font-semibold text-slate-800 block mb-0.5">Local Storage Mode</span>
+                  Cloud Supabase is not configured. Creating an account or signing in will safely save your decoded repository history in your browser local storage.
+                </div>
+              )}
               
               {authError && (
                 <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm border border-red-200">
@@ -441,35 +549,32 @@ export default function App() {
                     className="w-full border border-black/10 px-3 py-2 text-sm focus:outline-none focus:border-primary"
                   />
                 </div>
-                
-                <button 
-                  type="submit" 
+
+                <button
+                  type="submit"
                   disabled={authLoading}
-                  className="w-full bg-primary text-white py-2.5 text-xs uppercase tracking-widest hover:bg-black transition-colors disabled:opacity-50"
+                  className="w-full bg-primary text-on-primary py-2 text-xs font-sans uppercase tracking-widest hover:bg-black transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                 >
-                  {authLoading ? 'Processing...' : (isSignUp ? 'Sign Up' : 'Sign In')}
+                  {authLoading && <Loader2 size={14} className="animate-spin" />}
+                  {isSignUp ? 'Sign Up' : 'Sign In'}
                 </button>
               </form>
 
               <div className="relative mb-6">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-black/10"></div>
-                </div>
-                <div className="relative flex justify-center text-xs">
-                  <span className="bg-white px-2 text-black/40">Or continue with</span>
-                </div>
+                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-black/10" /></div>
+                <div className="relative flex justify-center text-xs uppercase tracking-widest"><span className="bg-white px-2 text-muted">Or</span></div>
               </div>
 
-              <button 
+              <button
                 type="button"
-                onClick={handleGithubLogin}
-                className="w-full flex items-center justify-center gap-2 border border-black/10 py-2.5 text-sm hover:bg-black/5 transition-colors"
+                onClick={handleOAuthLogin}
+                className="w-full border border-black/10 py-2.5 px-4 text-xs font-sans uppercase tracking-widest hover:bg-black/5 transition-colors flex items-center justify-center gap-2 mb-4"
               >
-                <Github size={16} /> GitHub
+                <Github size={14} /> Continue with GitHub
               </button>
 
-              <div className="mt-6 text-center">
-                <button 
+              <div className="text-center">
+                <button
                   type="button"
                   onClick={() => {
                     setIsSignUp(!isSignUp);
@@ -545,6 +650,11 @@ export default function App() {
                 getInputProps={getInputProps}
                 isDragActive={isDragActive}
                 error={error}
+                onOpenTokenModal={() => {
+                  setTokenInput(githubToken);
+                  setShowTokenModal(true);
+                }}
+                hasGitHubToken={!!githubToken}
               />
             </motion.div>
           ) : isAnalyzing ? (
@@ -553,9 +663,12 @@ export default function App() {
                 <FloatingPaths position={1} />
                 <FloatingPaths position={-1} />
               </div>
-              <span className="text- editorial-label animate-pulse relative z-10">Mapping Neural Nodes...</span>
-              <div className="h-px w-32 bg-primary/20 relative z-10" />
-              <p className="italic font-light text-muted relative z-10">Decoding the system architecture.</p>
+              <div className="flex flex-col items-center gap-4 relative z-10">
+                <Loader2 size={36} className="animate-spin text-primary" />
+                <span className="text-editorial-label animate-pulse">Mapping Neural Nodes & Decoding Repo...</span>
+                <div className="h-px w-32 bg-primary/20" />
+                <p className="italic font-light text-muted text-sm">Synthesizing architecture and vectorizing nodes.</p>
+              </div>
             </div>
           ) : (
             <motion.div 
@@ -573,17 +686,47 @@ export default function App() {
               {/* Summary Section */}
               <div className="max-w-5xl mx-auto px-6 py-12 flex flex-col gap-12 relative z-10">
                 
+                {/* Rate limit bypass notification banner */}
+                {rateLimitNotice && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="bg-sky-50 border border-sky-200 text-sky-950 px-4 py-3 rounded-sm text-xs font-sans flex items-center justify-between gap-3 shadow-sm"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="font-semibold uppercase tracking-wider text-[10px] bg-sky-200/80 text-sky-900 px-2 py-0.5 rounded">
+                        Rate-Limit Bypass Active
+                      </span>
+                      <span>{rateLimitNotice}</span>
+                    </div>
+                    <button 
+                      onClick={() => setRateLimitNotice(null)} 
+                      className="text-sky-600 hover:text-sky-900 text-sm font-bold px-1"
+                      title="Dismiss"
+                    >
+                      ✕
+                    </button>
+                  </motion.div>
+                )}
+
                 {/* Header Info */}
                 <div className="space-y-6 border-b border-black/10 pb-8">
                   <div className="flex items-center gap-4">
                      <button 
-                      onClick={() => { setAnalysis(null); setFiles([]); }}
+                      onClick={() => { setAnalysis(null); setFiles([]); setRateLimitNotice(null); }}
                       className="h-10 w-10 rounded-full border border-black/10 flex items-center justify-center hover:bg-black hover:text-white transition-all shrink-0"
                     >
                       <ArrowLeft size={16} />
                     </button>
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-sans text-black/50 tracking-widest uppercase mb-1">System Stage</p>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-3">
+                        <p className="text-[10px] font-sans text-black/50 tracking-widest uppercase mb-1">System Stage</p>
+                        {currentBranch && (
+                          <span className="text-[10px] font-mono text-black/40 border border-black/10 px-1.5 py-0.5 rounded">
+                            branch: {currentBranch}
+                          </span>
+                        )}
+                      </div>
                       <h2 className="text-2xl lg:text-3xl italic font-light truncate">{repoUrl || 'Project Archive'}</h2>
                     </div>
                   </div>
@@ -613,35 +756,23 @@ export default function App() {
                   </div>
                   <div>
                     <span className="text-[10px] font-sans uppercase tracking-widest opacity-40 block mb-1">Active Threads</span>
-                    <span className="text-[15px] italic font-light">{files.length} Nodes</span>
+                    <span className="text-[15px] font-medium">{files.length} Total Nodes</span>
                   </div>
                 </div>
 
-                {/* Intelligent Summary & Setup */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                {/* Architecture & Purpose */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-12 pt-8 border-t border-black/10">
                   <div className="space-y-4">
-                    <h3 className="text-editorial-label italic border-b border-black/5 pb-2">Repository Purpose</h3>
-                    <div className="markdown-body prose prose-slate leading-relaxed text-[15px]">
-                      <ReactMarkdown>{analysis?.purpose || ""}</ReactMarkdown>
-                    </div>
+                    <h3 className="text-editorial-label italic border-b border-black/5 pb-2">Mission Purpose</h3>
+                    <p className="text-[14px] font-sans leading-relaxed text-black/80">{analysis?.purpose}</p>
                   </div>
                   <div className="space-y-4">
-                    <h3 className="text-editorial-label italic border-b border-black/5 pb-2">Setup Instructions</h3>
-                    <div className="markdown-body prose prose-slate leading-relaxed text-[15px]">
-                      <ReactMarkdown>{analysis?.setupInstructions || ""}</ReactMarkdown>
-                    </div>
+                    <h3 className="text-editorial-label italic border-b border-black/5 pb-2">Architectural Blueprint</h3>
+                    <p className="text-[14px] font-sans leading-relaxed text-black/80">{analysis?.architectureOverview}</p>
                   </div>
                 </div>
 
-                {/* Architecture */}
-                <div className="bg-primary text-white p-8 sm:p-12 rounded-sm shadow-md space-y-6">
-                  <h3 className="text-editorial-label opacity-50 uppercase tracking-widest text-[9px] border-b border-white/10 pb-4">Architecture Overview</h3>
-                  <div className="markdown-body leading-relaxed opacity-90 prose-invert prose-slate text-[15px]">
-                    <ReactMarkdown>{analysis?.architectureOverview || ""}</ReactMarkdown>
-                  </div>
-                </div>
-
-                {/* Features & Use Cases */}
+                {/* Key Features & Primary Use Cases */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-12 pt-8 border-t border-black/10">
                   <div className="space-y-6">
                     <h3 className="text-editorial-label italic border-b border-black/5 pb-2">Key Features</h3>

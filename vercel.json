@@ -1,7 +1,13 @@
 {
-  "buildCommand": "npm run build",
-  "outputDirectory": "client/dist",
-  "installCommand": "npm install",
-  "framework": "vite",
-  "rootDirectory": "client"
+  "version": 2,
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.ts"
+    },
+    {
+      "source": "(.*)",
+      "destination": "/index.html"
+    }
+  ]
 }

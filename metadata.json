@@ -2,5 +2,7 @@
   "name": "RepoLens",
   "description": "An editorial-grade repository intelligence engine. Visualize architecture and decode complex codebases with scholastic precision.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

@@ -1,6 +1,6 @@
 import { FileNode, RepoAnalysis } from "../types";
 
-export const analyzeCodebase = async (files: { path: string; type: 'file' | 'dir' }[], repoUrl?: string) => {
+export const analyzeCodebase = async (files: { path: string; type: 'file' | 'dir' }[], repoUrl?: string): Promise<RepoAnalysis> => {
   // Only send the paths, without file contents, to keep payload size tiny
   const filesPayload = files.map(f => ({ path: f.path, type: f.type }));
   const response = await fetch('/api/analyzeCodebase', {
@@ -9,24 +9,48 @@ export const analyzeCodebase = async (files: { path: string; type: 'file' | 'dir
     body: JSON.stringify({ files: filesPayload, repoUrl }),
   });
   
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.error || "Failed to analyze codebase");
+  const contentType = response.headers.get('content-type') || '';
+  if (!response.ok || !contentType.includes('application/json')) {
+    const rawText = await response.text();
+    let errMessage = `Failed to analyze codebase (${response.status})`;
+    try {
+      const errorData = JSON.parse(rawText);
+      if (errorData?.error) errMessage = errorData.error;
+    } catch {
+      if (rawText.includes('<!doctype') || rawText.includes('<html')) {
+        errMessage = 'AI analysis service temporarily returned HTML. Please retry.';
+      } else if (rawText) {
+        errMessage = rawText;
+      }
+    }
+    throw new Error(errMessage);
   }
   
   return await response.json();
 };
 
-export const analyzeFile = async (filePath: string, fileContent: string) => {
+export const analyzeFile = async (filePath: string, fileContent: string): Promise<string> => {
   const response = await fetch('/api/analyzeFile', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filePath, fileContent }),
   });
 
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.error || "Failed to analyze file");
+  const contentType = response.headers.get('content-type') || '';
+  if (!response.ok || !contentType.includes('application/json')) {
+    const rawText = await response.text();
+    let errMessage = `Failed to analyze file (${response.status})`;
+    try {
+      const errorData = JSON.parse(rawText);
+      if (errorData?.error) errMessage = errorData.error;
+    } catch {
+      if (rawText.includes('<!doctype') || rawText.includes('<html')) {
+        errMessage = 'File analysis service is temporarily unavailable. Please retry in a moment.';
+      } else if (rawText) {
+        errMessage = rawText;
+      }
+    }
+    throw new Error(errMessage);
   }
 
   const data = await response.json();
@@ -38,28 +62,50 @@ export const askRepositoryQuestion = async (
   history: { role: 'user' | 'model'; text: string }[],
   files: FileNode[],
   analysis: RepoAnalysis | null
-) => {
-  // Only send the top 100 files with up to 5000 chars of content to avoid payload issues
-  const relevantFiles = files
-    .filter(f => f.type === 'file' && f.content && f.content.length > 0)
-    .slice(0, 100)
-    .map(f => ({
-      ...f,
-      content: f.content?.substring(0, 5000)
-    }));
+): Promise<string> => {
+  // Keep file payload lightweight: send paths for structural map, and excerpts of files with content
+  const payloadFiles = files.slice(0, 150).map(f => {
+    if (f.type === 'file' && f.content) {
+      return {
+        path: f.path,
+        type: f.type,
+        content: f.content.substring(0, 1500)
+      };
+    }
+    return {
+      path: f.path,
+      type: f.type
+    };
+  });
 
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, history, files: relevantFiles, analysis }),
+    body: JSON.stringify({ 
+      message, 
+      history: history.slice(-6), 
+      files: payloadFiles, 
+      analysis 
+    }),
   });
 
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.error || "Failed to ask question");
+  const contentType = response.headers.get('content-type') || '';
+  if (!response.ok || !contentType.includes('application/json')) {
+    let errMessage = `Error (${response.status}): Failed to get AI response`;
+    try {
+      const errorData = await response.json();
+      if (errorData?.error) errMessage = errorData.error;
+    } catch {
+      const rawText = await response.text();
+      if (rawText.includes('<!doctype') || rawText.includes('<html')) {
+        errMessage = 'Chat service temporarily unavailable (received HTML). Please wait a moment and retry.';
+      } else if (rawText) {
+        errMessage = rawText;
+      }
+    }
+    throw new Error(errMessage);
   }
 
   const data = await response.json();
   return data.result;
 };
-
